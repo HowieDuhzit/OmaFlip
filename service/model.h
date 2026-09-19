@@ -1,6 +1,7 @@
 #pragma once
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <optional>
 
 namespace omaflip {
@@ -18,4 +19,7 @@ QJsonObject systemError(const QString& operation, const QString& path, int error
 QString cleanTerminal(const QByteArray& bytes);
 QJsonObject parseInfo(const QByteArray& bytes);
 std::optional<QByteArray> takeCliResponse(QByteArray& buffer);
+QStringList desktopNotifyArgs(const QString& category, const QString& urgency, const QString& title, const QString& body);
+bool desktopNotifyCategoryAllowed(const QString& category);
+void desktopNotify(const QString& category, const QString& urgency, const QString& title, const QString& body);
 }

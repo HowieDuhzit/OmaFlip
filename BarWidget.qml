@@ -21,7 +21,8 @@ Ui.BarWidget {
         panelLoader.item.hostWidget = root
     }
     function configure() {
-        if (service) service.configure(setting("autoConnect", true), setting("preferredDevice", ""))
+        if (service) service.configure(setting("autoConnect", true), setting("preferredDevice", ""),
+            setting("notifyConnect", true), setting("notifyError", true))
     }
     function persist(name, value) {
         const entry = Object.assign({}, settings, {id: moduleName})
@@ -49,6 +50,9 @@ Ui.BarWidget {
         text: root.vertical || root.setting("compact", false) ? "󰓻" : "󰓻  " + root.deviceName
         tooltipText: "OmaFlip · " + (root.service ? root.service.state : "Service unavailable")
             + (root.device && root.device.power.charge_level !== undefined ? " · " + root.device.power.charge_level + "%" : "")
+        Accessible.role: Accessible.Button
+        Accessible.name: "OmaFlip " + root.deviceName + " " + (root.service ? root.service.state : "unavailable")
+        Accessible.onPressAction: root.toggle()
         onPressed: buttonCode => { if (buttonCode === Qt.LeftButton) root.toggle() }
     }
 }

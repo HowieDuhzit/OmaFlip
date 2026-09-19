@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.howieduhzit.omaflip",
   "name": "OmaFlip",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "author": "HowieDuhzit",
   "license": "MIT",
-  "description": "Native Flipper Zero USB status and device information for Omarchy.",
+  "description": "Native Flipper Zero management for Omarchy: USB, remote, files, CLI, apps, backups, firmware, and Dev.",
   "kinds": ["bar-widget", "service"],
   "entryPoints": {"barWidget": "BarWidget.qml", "service": "Service.qml"},
   "barWidget": {

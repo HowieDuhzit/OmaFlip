@@ -1,14 +1,42 @@
 cmake_minimum_required(VERSION 3.25)
-project(OmaFlip VERSION 0.1.0 LANGUAGES CXX)
+project(OmaFlip VERSION 1.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Network)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(UDEV REQUIRED IMPORTED_TARGET libudev)
-add_library(omaflip_core service/model.cpp service/serial.cpp service/discovery.cpp)
+pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
+find_program(PROTOC protoc REQUIRED)
+
+set(PROTO_DIR ${CMAKE_SOURCE_DIR}/proto)
+set(PROTO_GEN ${CMAKE_CURRENT_BINARY_DIR}/proto_gen)
+set(PROTO_NAMES flipper system storage application gui gpio property desktop)
+set(PROTO_SRCS "")
+set(PROTO_HDRS "")
+set(PROTO_INPUTS "")
+foreach(name ${PROTO_NAMES})
+  list(APPEND PROTO_INPUTS ${PROTO_DIR}/${name}.proto)
+  list(APPEND PROTO_SRCS ${PROTO_GEN}/${name}.pb.cc)
+  list(APPEND PROTO_HDRS ${PROTO_GEN}/${name}.pb.h)
+endforeach()
+file(MAKE_DIRECTORY ${PROTO_GEN})
+add_custom_command(
+  OUTPUT ${PROTO_SRCS} ${PROTO_HDRS}
+  COMMAND ${PROTOC} --cpp_out=${PROTO_GEN} -I ${PROTO_DIR} ${PROTO_INPUTS}
+  DEPENDS ${PROTO_INPUTS}
+  COMMENT "Generating Flipper RPC C++ bindings"
+  VERBATIM)
+
+add_library(omaflip_proto STATIC ${PROTO_SRCS})
+target_include_directories(omaflip_proto SYSTEM PUBLIC ${PROTO_GEN})
+target_link_libraries(omaflip_proto PUBLIC PkgConfig::PROTOBUF)
+target_compile_options(omaflip_proto PRIVATE -w)
+
+add_library(omaflip_core service/model.cpp service/serial.cpp service/discovery.cpp service/rpc.cpp service/screen.cpp service/remote.cpp service/files.cpp service/cli.cpp service/apps.cpp service/firmware.cpp service/manage.cpp service/dev.cpp)
 target_include_directories(omaflip_core PUBLIC service)
-target_link_libraries(omaflip_core PUBLIC Qt6::Core PkgConfig::UDEV)
+target_compile_definitions(omaflip_core PUBLIC OMAFLIP_VERSION="${PROJECT_VERSION}")
+target_link_libraries(omaflip_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network PkgConfig::UDEV omaflip_proto)
 target_compile_options(omaflip_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(omaflip service/main.cpp service/backend.cpp)
 target_link_libraries(omaflip PRIVATE omaflip_core)

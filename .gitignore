@@ -1,4 +1,6 @@
 /build*/
+/dist/
+/CMakeFiles/
 *.user
 *.swp
 .DS_Store

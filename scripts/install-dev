@@ -10,7 +10,7 @@ fi
 [[ -x "$HOME/.local/lib/omaflip/omaflip" ]] || { echo 'Run scripts/build first.' >&2; exit 1; }
 omarchy plugin validate "$repo_dir"
 mkdir -p "$plugin_dir"
-for entry in manifest.json BarWidget.qml Panel.qml Service.qml qml scripts service tests udev docs screenshots CMakeLists.txt README.md LICENSE CONTRIBUTING.md CHANGELOG.md .gitignore; do
+for entry in manifest.json BarWidget.qml Panel.qml Service.qml qml scripts service tests proto udev docs screenshots CMakeLists.txt README.md LICENSE CONTRIBUTING.md CHANGELOG.md .gitignore; do
   cp -r -- "$repo_dir/$entry" "$plugin_dir/"
 done
 omarchy plugin validate "$plugin_dir"

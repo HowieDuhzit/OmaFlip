@@ -1,4 +1,5 @@
 # Active-seat permissions, applied before systemd's 73-seat-late.rules.
-# Match the Flipper descriptors as well as the shared STM32 VID/PID.
-SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{manufacturer}=="Flipper Devices Inc.", ATTRS{product}=="Flipper Control Virtual ComPort", TAG+="uaccess"
+# Match the stable Flipper descriptors. Custom firmware may use the configured
+# device name instead of the stock USB product string.
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ATTRS{manufacturer}=="Flipper Devices Inc.", TAG+="uaccess"
 # No blanket STM32 DFU write permission: Milestone 1 only observes bootloaders.

@@ -1,5 +1,7 @@
 #include "model.h"
+#include <QProcess>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <cerrno>
 #include <cstring>
 
@@ -35,8 +37,10 @@ bool allowedTransition(State from, State to) {
 }
 UsbKind classify(const UsbIdentity& usb) {
     if(usb.vendor.toLower() != "0483") return UsbKind::Other;
-    if(usb.product.toLower() == "5740" && usb.manufacturer == "Flipper Devices Inc." &&
-       usb.description == "Flipper Control Virtual ComPort") return UsbKind::FlipperSerial;
+    // Custom firmware may expose the configured device name as the USB product
+    // string. VID/PID plus Flipper's manufacturer descriptor stays stable.
+    if(usb.product.toLower() == "5740" && usb.manufacturer == "Flipper Devices Inc.")
+        return UsbKind::FlipperSerial;
     // STM32 ROM bootloader identifiers are shared; never claim this proves a Flipper.
     if(usb.product.toLower() == "df11") return UsbKind::DfuCandidate;
     return UsbKind::Other;
@@ -88,5 +92,24 @@ std::optional<QByteArray> takeCliResponse(QByteArray& buffer) {
     QByteArray result = buffer;
     buffer.clear();
     return result;
+}
+
+bool desktopNotifyCategoryAllowed(const QString& category) {
+    return category == "device.added" || category == "device.removed" || category == "device.error";
+}
+
+QStringList desktopNotifyArgs(const QString& category, const QString& urgency, const QString& title, const QString& body) {
+    if(!desktopNotifyCategoryAllowed(category) || title.isEmpty()) return {};
+    const auto level = urgency == "critical" || urgency == "low" ? urgency : QString("normal");
+    return {"--app-name=OmaFlip", "--urgency=" + level, "--category=" + category,
+        "--expire-time=5000", "--", title, body};
+}
+
+void desktopNotify(const QString& category, const QString& urgency, const QString& title, const QString& body) {
+    const auto args = desktopNotifyArgs(category, urgency, title, body);
+    if(args.isEmpty()) return;
+    const auto binary = QStandardPaths::findExecutable("notify-send");
+    if(binary.isEmpty()) return;
+    QProcess::startDetached(binary, args);
 }
 }

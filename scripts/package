@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+version=$(sed -n 's/^project(OmaFlip VERSION \([^ ]*\).*/\1/p' "$repo_dir/CMakeLists.txt" | head -1)
+[[ -n "$version" ]] || { echo 'Could not read project version.' >&2; exit 1; }
+[[ -x "$repo_dir/build/omaflip" ]] || { echo 'Run scripts/build first.' >&2; exit 1; }
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+root="$stage/omaflip-$version"
+mkdir -p "$root/bin" "$root/plugin"
+install -Dm755 "$repo_dir/build/omaflip" "$root/bin/omaflip"
+for entry in manifest.json BarWidget.qml Panel.qml Service.qml qml scripts proto udev docs screenshots CMakeLists.txt README.md LICENSE CONTRIBUTING.md CHANGELOG.md tests; do
+  cp -a -- "$repo_dir/$entry" "$root/plugin/"
+done
+cat > "$root/INSTALL.txt" <<EOF
+OmaFlip $version
+
+1. Copy plugin/ to ~/.config/omarchy/plugins/io.github.howieduhzit.omaflip
+2. install -Dm755 bin/omaflip ~/.local/lib/omaflip/omaflip
+3. omarchy plugin validate ~/.config/omarchy/plugins/io.github.howieduhzit.omaflip
+4. Enable the widget, then omarchy-restart-shell
+EOF
+mkdir -p "$repo_dir/dist"
+archive="$repo_dir/dist/omaflip-$version-linux-$(uname -m).tar.gz"
+tar -C "$stage" -czf "$archive" "omaflip-$version"
+echo "$archive"

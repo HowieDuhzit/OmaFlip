@@ -18,7 +18,12 @@ Row {
     }
     Text {
         width: root.width - x
-        text: root.value === null || root.value === undefined || root.value === "" ? "Unavailable" : String(root.value)
+        text: {
+            const value = root.value
+            if (value === null || value === undefined || value === "") return "Unavailable"
+            if (typeof value === "object") return value.summary || value.storage || "Unavailable"
+            return String(value)
+        }
         textFormat: Text.PlainText
         color: root.foreground
         font.family: Style.font.family

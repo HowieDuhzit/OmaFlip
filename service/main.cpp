@@ -16,7 +16,10 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName("omaflip");
     const auto args = app.arguments();
-    if(args.contains("--version")) { puts("OmaFlip 0.1.0 (IPC 1)"); return 0; }
+    if(args.contains("--version")) {
+        fprintf(stdout, "OmaFlip %s (IPC 1)\n", OMAFLIP_VERSION);
+        return 0;
+    }
     if(args.size() != 2 || (args[1] != "--stdio" && args[1] != "--scan")) {
         fprintf(stderr, "Usage: omaflip --stdio | --scan | --version\n"); return 2;
     }

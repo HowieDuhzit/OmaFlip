@@ -1,8 +1,13 @@
 # Contributing
 
 Build and validate using [development.md](docs/development.md). Keep changes in
-functional vertical slices. Milestone 1 must pass on a physical Flipper before
-RPC or other later milestones are developed.
+functional vertical slices. Remaining Milestone 1 window and reconnect checks
+are manual. Momentum updates use `up.momentum-fw.dev`, not the official
+index. Official firmware apply is destructive and must keep confirmation and
+origin checks. Asset packs install to `/ext/asset_packs` only; do not write
+undocumented Momentum settings. Developer `ufbt` runs as an argument list, never
+a shell, and must not expose `flash` / GPIO write. Desktop notifications use
+`notify-send` with an allow-listed `device.*` category only.
 
 Use current upstream source to verify protocol and shell APIs. Record source
 revisions and firmware versions in test results. Device-protocol code belongs

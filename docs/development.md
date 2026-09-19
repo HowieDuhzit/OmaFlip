@@ -1,6 +1,14 @@
 # Development
 
 Build with `./scripts/build`; run process tests with `python tests/test_ipc.py`.
+`protoc` and libprotobuf are required so CMake can generate Flipper RPC bindings.
+Qt Gui is required for screen PNG encode/decode. Filesystem path and
+chunked storage RPC tests live in the same C++ suite, as do CLI help parsing
+and a pseudoterminal console session. Backup metadata compatibility, official
+and Momentum firmware index parsing, updater manifest paths, asset-pack
+index parsing, ufbt project helpers, and desktop-notification argument allow-lists are
+unit-tested; live firmware apply, `ufbt` builds, and notify-send delivery
+are hardware-only.
 Qt Test fixtures use pseudoterminals and visibly synthetic `TEST_ONLY` values;
 they are compiled only into the test executable. `--scan` only enumerates USB
 metadata and does not open device ports. `--stdio` waits for a configure command
