@@ -149,6 +149,12 @@ Ui.Panel {
         if (devOpen) { devOpen = false; if (service) service.devStop() }
     }
 
+    readonly property color accentColor: "#3B82F6"
+    readonly property color statusGreen: "#22C55E"
+    readonly property color cardBg: Qt.alpha(root.barForeground, 0.06)
+    readonly property color cardBorder: Qt.alpha(root.barForeground, 0.12)
+    readonly property color subtleText: Qt.alpha(root.barForeground, 0.55)
+
     Ui.KeyboardPanel {
         id: popup
         anchorItem: root.anchorItem
@@ -156,7 +162,7 @@ Ui.Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keys
-        contentWidth: popup.fittedContentWidth(Style.space(root.sessionOpen ? 560 : (root.details ? 480 : 360)))
+        contentWidth: popup.fittedContentWidth(Style.space(root.sessionOpen ? 580 : (root.details ? 520 : 460)))
         contentHeight: popup.fittedContentHeight(content.implicitHeight)
 
         Ui.PanelKeyCatcher {
@@ -264,137 +270,453 @@ Ui.Panel {
                 Column {
                     id: content
                     width: scroll.width
-                    spacing: Style.space(10)
-                    Text {
-                        text: "󰓻  " + (root.info.hardware_name || "OmaFlip")
-                        textFormat: Text.PlainText
-                        color: root.barForeground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.subtitle
-                        font.bold: true
-                    }
-                    Text {
+                    spacing: Style.space(12)
+
+                    // ── Device Status Card ──
+                    Rectangle {
                         width: parent.width
-                        text: root.status
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                        color: root.barForeground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.body
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: deviceStatusCol.implicitHeight + 24
+                        Column {
+                            id: deviceStatusCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 6
+                            Row {
+                                spacing: 8
+                                Text {
+                                    text: "󰓻"
+                                    color: root.accentColor
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.subtitle
+                                }
+                                Text {
+                                    text: root.info.hardware_name || "OmaFlip"
+                                    textFormat: Text.PlainText
+                                    color: root.barForeground
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.subtitle
+                                    font.bold: true
+                                }
+                            }
+                            Row {
+                                spacing: 6
+                                Rectangle {
+                                    width: 8
+                                    height: 8
+                                    radius: 4
+                                    color: root.device ? root.statusGreen : Qt.alpha(root.barForeground, 0.25)
+                                }
+                                Text {
+                                    text: root.status
+                                    textFormat: Text.PlainText
+                                    color: root.barForeground
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.body
+                                }
+                            }
+                            Text {
+                                width: parent.width
+                                visible: !root.device
+                                text: root.service && root.service.ready && root.service.devices.length === 0
+                                    ? "Connect your Flipper Zero using a USB data cable."
+                                    : "Choose a device above, or inspect the service diagnostics below."
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                                color: root.subtleText
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.caption
+                            }
+                            Row {
+                                visible: root.power.charge_level !== undefined
+                                spacing: 6
+                                Text { text: "󰁹"; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text {
+                                    text: (root.power.charge_level || 0) + "%" + (root.power.charge_state ? " · " + root.power.charge_state : "")
+                                    textFormat: Text.PlainText
+                                    color: root.barForeground
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.caption
+                                }
+                            }
+                            Row {
+                                visible: root.storageText.length > 0
+                                spacing: 6
+                                Text { text: "󰉋"; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text {
+                                    text: root.storageText
+                                    textFormat: Text.PlainText
+                                    color: root.barForeground
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.caption
+                                }
+                            }
+                        }
                     }
-                    Text {
+
+                    // ── Quick Actions Card ──
+                    Rectangle {
+                        visible: root.device !== null && !root.sessionOpen
                         width: parent.width
-                        visible: !root.device
-                        text: root.service && root.service.ready && root.service.devices.length === 0
-                            ? "Connect your Flipper Zero using a USB data cable."
-                            : "Choose a device above, or inspect the service diagnostics below."
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                        color: Qt.alpha(root.barForeground, 0.65)
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.body
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: quickActionsCol.implicitHeight + 24
+                        Column {
+                            id: quickActionsCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰀻"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Quick Actions"; textFormat: Text.PlainText; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: 6
+                                Repeater {
+                                    model: [
+                                        {label: "Remote", op: "remote", icon: "󰖟"},
+                                        {label: "Files", op: "files", icon: "󰉋"},
+                                        {label: "CLI", op: "cli", icon: "󰆍"},
+                                        {label: "Apps", op: "apps", icon: "󰀻"},
+                                        {label: "Backup", op: "manage", icon: "󰁿"},
+                                        {label: "Dev", op: "dev", icon: "󰅂"}
+                                    ]
+                                    Rectangle {
+                                        required property var modelData
+                                        width: 72
+                                        height: 56
+                                        radius: 8
+                                        color: mouse.pressed ? Qt.alpha(root.accentColor, 0.25) : (mouse.containsMouse ? Qt.alpha(root.accentColor, 0.12) : root.cardBg)
+                                        border.width: 1
+                                        border.color: mouse.containsMouse ? Qt.alpha(root.accentColor, 0.4) : root.cardBorder
+                                        Column {
+                                            anchors.centerIn: parent
+                                            spacing: 4
+                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.icon; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.subtitle }
+                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.label; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                        }
+                                        MouseArea {
+                                            id: mouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.toggleSession(modelData.op)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    Oma.RemoteView {
+
+                    // ── Remote Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.remoteOpen && root.device
-                        service: root.service
-                        foreground: root.barForeground
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: remoteCol.implicitHeight + 24
+                        Column {
+                            id: remoteCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰖟"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Remote"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.RemoteView {
+                                width: parent.width
+                                service: root.service
+                                foreground: root.barForeground
+                            }
+                        }
                     }
-                    Oma.FilesView {
-                        id: fileView
+
+                    // ── Files Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.filesOpen && root.device
-                        service: root.service
-                        foreground: root.barForeground
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: filesCol.implicitHeight + 24
+                        Column {
+                            id: filesCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰉋"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Files"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.FilesView {
+                                id: fileView
+                                width: parent.width
+                                service: root.service
+                                foreground: root.barForeground
+                            }
+                        }
                     }
-                    Oma.CliView {
-                        id: cliView
+
+                    // ── CLI Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.cliOpen && root.device
-                        service: root.service
-                        foreground: root.barForeground
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: cliCol.implicitHeight + 24
+                        Column {
+                            id: cliCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰆍"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "CLI"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.CliView {
+                                id: cliView
+                                width: parent.width
+                                service: root.service
+                                foreground: root.barForeground
+                            }
+                        }
                     }
-                    Oma.AppsView {
-                        id: appsView
+
+                    // ── Apps Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.appsOpen && root.device
-                        service: root.service
-                        foreground: root.barForeground
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: appsCol.implicitHeight + 24
+                        Column {
+                            id: appsCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰀻"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Apps"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.AppsView {
+                                id: appsView
+                                width: parent.width
+                                service: root.service
+                                foreground: root.barForeground
+                            }
+                        }
                     }
-                    Oma.ManageView {
-                        id: manageView
+
+                    // ── Backup Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.manageOpen && root.device
-                        service: root.service
-                        foreground: root.barForeground
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: manageCol.implicitHeight + 24
+                        Column {
+                            id: manageCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰁿"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Backup"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.ManageView {
+                                id: manageView
+                                width: parent.width
+                                service: root.service
+                                foreground: root.barForeground
+                            }
+                        }
                     }
-                    Oma.DevView {
-                        id: devView
+
+                    // ── Dev Card ──
+                    Rectangle {
                         width: parent.width
                         visible: root.devOpen && root.device
-                        service: root.service
-                        hostWidget: root.hostWidget
-                        foreground: root.barForeground
-                    }
-                    Column {
-                        width: parent.width
-                        spacing: Style.space(7)
-                        visible: root.device !== null && !root.sessionOpen
-                        Oma.InfoRow { width: parent.width; label: "Firmware"; value: root.info.firmware_version; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Origin"; value: root.info.firmware_origin_fork; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Battery"; value: root.power.charge_level !== undefined ? root.power.charge_level + "% · " + (root.power.charge_state || "Unavailable") : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Storage"; value: root.storageText || null; foreground: root.barForeground }
-                    }
-                    Column {
-                        width: parent.width
-                        spacing: Style.space(7)
-                        visible: root.details && root.device !== null && !root.sessionOpen
-                        Oma.InfoRow { width: parent.width; label: "USB serial"; value: root.device ? root.device.usbSerial : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Hardware"; value: root.info.hardware_ver; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Region"; value: root.regionText || null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Battery health"; value: root.power.battery_health !== undefined ? root.power.battery_health + "%" : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Port"; value: root.device ? root.device.port : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "RPC"; value: root.rpcText || null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Probe"; value: root.rpc.probeMs !== undefined ? root.rpc.probeMs + " ms" : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Ping"; value: root.rpc.pingMs !== undefined ? root.rpc.pingMs + " ms" : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "OmaFlip"; value: root.service && root.service.backendVersion ? root.service.backendVersion : null; foreground: root.barForeground }
-                        Oma.InfoRow { width: parent.width; label: "Last read (UTC)"; value: root.device ? root.device.sampledAt : null; foreground: root.barForeground }
-                    }
-                    Text {
-                        width: parent.width
-                        visible: text.length > 0
-                        text: root.errorText || (root.device ? root.device.warning : "")
-                        textFormat: Text.PlainText
-                        wrapMode: Text.WrapAnywhere
-                        color: root.barForeground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.body
-                    }
-                    Text {
-                        width: parent.width
-                        visible: root.showDiagnostics
-                        text: root.service ? (root.service.diagnostics || "No backend errors recorded.") + "\n" + JSON.stringify(root.device || {}, null, 2) : "Service not loaded."
-                        textFormat: Text.PlainText
-                        wrapMode: Text.WrapAnywhere
-                        color: Qt.alpha(root.barForeground, 0.7)
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.caption
-                    }
-                    Rectangle { width: parent.width; height: 1; color: Qt.alpha(root.barForeground, 0.15) }
-                    Column {
-                        id: actionList
-                        width: parent.width
-                        Repeater {
-                            id: actionRepeater
-                            model: root.actions
-                            Oma.Action {
-                                required property var modelData
-                                required property int index
-                                width: actionList.width
-                                text: modelData.label
-                                selected: root.cursor === index
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: devCol.implicitHeight + 24
+                        Column {
+                            id: devCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "󰅂"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Dev"; textFormat: Text.PlainText; color: root.barForeground; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.DevView {
+                                id: devView
+                                width: parent.width
+                                service: root.service
+                                hostWidget: root.hostWidget
                                 foreground: root.barForeground
-                                onTriggered: { root.cursor = index; root.activate(index) }
+                            }
+                        }
+                    }
+
+                    // ── Device Info Card ──
+                    Rectangle {
+                        width: parent.width
+                        visible: root.device !== null && !root.sessionOpen
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: infoCol.implicitHeight + 24
+                        Column {
+                            id: infoCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 6
+                            Row {
+                                spacing: 8
+                                Text { text: "󰍹"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Device Info"; textFormat: Text.PlainText; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Oma.InfoRow { width: parent.width; label: "Firmware"; value: root.info.firmware_version; foreground: root.barForeground }
+                            Oma.InfoRow { width: parent.width; label: "Origin"; value: root.info.firmware_origin_fork; foreground: root.barForeground }
+                            Oma.InfoRow { width: parent.width; label: "Battery"; value: root.power.charge_level !== undefined ? root.power.charge_level + "% · " + (root.power.charge_state || "Unavailable") : null; foreground: root.barForeground }
+                            Oma.InfoRow { width: parent.width; label: "Storage"; value: root.storageText || null; foreground: root.barForeground }
+                            Column {
+                                width: parent.width
+                                spacing: 6
+                                visible: root.details
+                                Oma.InfoRow { width: parent.width; label: "USB serial"; value: root.device ? root.device.usbSerial : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Hardware"; value: root.info.hardware_ver; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Region"; value: root.regionText || null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Battery health"; value: root.power.battery_health !== undefined ? root.power.battery_health + "%" : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Port"; value: root.device ? root.device.port : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "RPC"; value: root.rpcText || null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Probe"; value: root.rpc.probeMs !== undefined ? root.rpc.probeMs + " ms" : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Ping"; value: root.rpc.pingMs !== undefined ? root.rpc.pingMs + " ms" : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "OmaFlip"; value: root.service && root.service.backendVersion ? root.service.backendVersion : null; foreground: root.barForeground }
+                                Oma.InfoRow { width: parent.width; label: "Last read (UTC)"; value: root.device ? root.device.sampledAt : null; foreground: root.barForeground }
+                            }
+                        }
+                    }
+
+                    // ── Error Card ──
+                    Rectangle {
+                        visible: root.errorText.length > 0 || (root.device && root.device.warning)
+                        width: parent.width
+                        radius: 10
+                        color: Qt.alpha("#EF4444", 0.08)
+                        border.width: 1
+                        border.color: Qt.alpha("#EF4444", 0.25)
+                        height: errorCol.implicitHeight + 24
+                        Column {
+                            id: errorCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 6
+                            Text {
+                                width: parent.width
+                                text: root.errorText || (root.device ? root.device.warning : "")
+                                textFormat: Text.PlainText
+                                wrapMode: Text.WrapAnywhere
+                                color: root.barForeground
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.body
+                            }
+                        }
+                    }
+
+                    // ── Diagnostics Card ──
+                    Rectangle {
+                        visible: root.showDiagnostics
+                        width: parent.width
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: diagCol.implicitHeight + 24
+                        Column {
+                            id: diagCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 6
+                            Row {
+                                spacing: 8
+                                Text { text: "󰋈"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Diagnostics"; textFormat: Text.PlainText; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Text {
+                                width: parent.width
+                                text: root.service ? (root.service.diagnostics || "No backend errors recorded.") + "\n" + JSON.stringify(root.device || {}, null, 2) : "Service not loaded."
+                                textFormat: Text.PlainText
+                                wrapMode: Text.WrapAnywhere
+                                color: Qt.alpha(root.barForeground, 0.7)
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.caption
+                            }
+                        }
+                    }
+
+                    // ── Settings Card ──
+                    Rectangle {
+                        visible: !root.sessionOpen
+                        width: parent.width
+                        radius: 10
+                        color: root.cardBg
+                        border.width: 1
+                        border.color: root.cardBorder
+                        height: settingsCol.implicitHeight + 24
+                        Column {
+                            id: settingsCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 6
+                            Row {
+                                spacing: 8
+                                Text { text: "󰍬"; color: root.accentColor; font.family: Style.font.family; font.pixelSize: Style.font.caption }
+                                Text { text: "Settings"; textFormat: Text.PlainText; color: root.subtleText; font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
+                            }
+                            Column {
+                                id: settingsList
+                                width: parent.width
+                                spacing: Style.space(4)
+                                Repeater {
+                                    id: settingsRepeater
+                                    model: root.actions
+                                    Oma.Action {
+                                        required property var modelData
+                                        required property int index
+                                        width: settingsList.width
+                                        text: modelData.label
+                                        selected: root.cursor === index
+                                        foreground: root.barForeground
+                                        onTriggered: { root.cursor = index; root.activate(index) }
+                                    }
+                                }
                             }
                         }
                     }
@@ -403,8 +725,10 @@ Ui.Panel {
         }
     }
     function moveCursor(direction) {
-        cursor = (cursor + direction + actions.length) % actions.length
-        const item = actionRepeater.itemAt(cursor)
+        const list = settingsRepeater
+        const count = list.count
+        cursor = (cursor + direction + count) % count
+        const item = list.itemAt(cursor)
         if (!item) return
         const point = item.mapToItem(content, 0, 0)
         if (point.y < scroll.contentY) scroll.contentY = point.y

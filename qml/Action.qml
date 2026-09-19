@@ -6,23 +6,24 @@ Rectangle {
     property string text: ""
     property bool selected: false
     property color foreground: Color.foreground
+    property color accentColor: "#3B82F6"
     signal triggered()
     implicitHeight: Style.space(32)
-    radius: Style.cornerRadius
-    color: selected || mouse.containsMouse ? Qt.alpha(foreground, 0.1) : "transparent"
+    radius: 8
+    color: selected ? Qt.alpha(root.accentColor, 0.15) : (mouse.containsMouse ? Qt.alpha(root.foreground, 0.08) : "transparent")
     border.width: selected ? 1 : 0
-    border.color: Qt.alpha(foreground, 0.5)
+    border.color: selected ? Qt.alpha(root.accentColor, 0.4) : "transparent"
     Accessible.role: Accessible.Button
     Accessible.name: text
     Accessible.onPressAction: root.triggered()
     Behavior on color { ColorAnimation { duration: 80 } }
     Text {
         anchors.fill: parent
-        leftPadding: Style.space(8)
+        leftPadding: Style.space(10)
         verticalAlignment: Text.AlignVCenter
         text: root.text
         textFormat: Text.PlainText
-        color: root.foreground
+        color: selected ? root.accentColor : root.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
