@@ -5,6 +5,16 @@ remote screen, files, CLI, apps, backups, firmware, and Dev.
 
 ![OmaFlip disconnected panel using the active Omarchy theme](preview.png)
 
+Connected views on a Momentum Flipper named Flippie:
+
+| Connected | Remote | Files |
+| --- | --- | --- |
+| ![Connected](screenshots/connected.png) | ![Remote](screenshots/remote.png) | ![Files](screenshots/files.png) |
+
+| CLI | Apps | Backup | Dev |
+| --- | --- | --- | --- |
+| ![CLI](screenshots/cli.png) | ![Apps](screenshots/apps.png) | ![Backup](screenshots/backup.png) | ![Dev](screenshots/dev.png) |
+
 ## Install
 
 ```sh
