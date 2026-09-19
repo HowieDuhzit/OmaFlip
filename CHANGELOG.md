@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 — Remote pointer (unreleased)
+## 1.2.0 — Remote pointer (2026-09-19)
 
 - Map mouse on the remote screen to Flipper buttons: left click OK, right click
   Back, drag for D-pad, wheel for scroll. Swipes follow the displayed

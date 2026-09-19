@@ -1,16 +1,72 @@
 # OmaFlip
 
-Native Flipper Zero management for the Omarchy desktop.
+Native Flipper Zero management for the Omarchy Quattro bar: USB discovery,
+remote screen, files, CLI, apps, backups, firmware, and Dev.
 
-**1.2.0.** Native Flipper Zero management for Omarchy: USB, remote, files, CLI,
-apps, backups, official and Momentum firmware, asset packs, Dev, desktop
-notifications, and probe timings. Each interactive view holds the serial port
-only while it is open. Remaining Milestone 1 window and reconnect checks are
-manual. No fake device data or nonfunctional feature buttons are shipped.
+![OmaFlip disconnected panel using the active Omarchy theme](preview.png)
 
-![OmaFlip disconnected panel using the active Omarchy theme](screenshots/disconnected.png)
+## Install
 
-## Features in this slice
+```sh
+omarchy plugin add https://github.com/HowieDuhzit/OmaFlip.git --enable
+```
+
+The plugin ships QML plus a native `omaflip` backend. After adding it, build
+once (nothing runs as root):
+
+```sh
+cd ~/.config/omarchy/plugins/io.github.howieduhzit.omaflip
+./scripts/build
+```
+
+Then choose **Restart service** in the panel. Arch build packages:
+`base-devel cmake qt6-base qt6-declarative systemd protobuf`.
+
+The development installer copies a local checkout into the plugin directory and
+**refuses to overwrite** an existing install:
+
+```sh
+./scripts/build
+./scripts/install-dev
+```
+
+## Usage
+
+Connect a Flipper Zero with a USB data cable. Click **OmaFlip** in the bar.
+Escape closes the panel. Open Remote, Files, CLI, Apps, Backup, or Dev from
+the connected panel. Those views hold the serial port only while open.
+
+```sh
+omarchy-shell shell summon io.github.howieduhzit.omaflip '{}'
+omarchy-shell shell hide io.github.howieduhzit.omaflip
+```
+
+## Configure
+
+```sh
+omarchy bar move io.github.howieduhzit.omaflip --section right
+```
+
+Auto-connect, bar label, notify-on-connect, and notify-on-error persist in the
+widget's Omarchy settings. They do not rewrite unrelated `shell.json` keys.
+
+## Remove
+
+```sh
+omarchy plugin remove io.github.howieduhzit.omaflip --yes
+```
+
+Omarchy removes the plugin checkout and its bar entry. Optional leftovers:
+
+```sh
+rm -f ~/.local/lib/omaflip/omaflip
+sudo rm -f /etc/udev/rules.d/70-omaflip.rules
+sudo udevadm control --reload-rules
+```
+
+No firmware or Flipper files are changed.
+
+## Features
 
 - One native QML bar widget and keyboard-operated panel inside Omarchy's existing shell.
 - One C++20 backend per user, owned by the plugin's service lifecycle.
@@ -63,35 +119,9 @@ Arch packages: `base-devel cmake qt6-base qt6-declarative systemd protobuf`.
 Python is used for development process tests only. Runtime does not require
 Python, Qt SerialPort, Electron, a web server, or a second Quickshell instance.
 
-## Installation
-
-This preview is source-built. The Omarchy plugin manifest has no build hook;
-installing the QML repository alone does not compile a native executable.
-
-Once this repository is published:
-
-```sh
-omarchy plugin add https://github.com/HowieDuhzit/OmaFlip.git --enable
-cd ~/.config/omarchy/plugins/io.github.howieduhzit.omaflip
-./scripts/build
-```
-
-Choose **Restart service** in the panel after building. If the backend is absent,
-**Build / repair backend** opens the same build script in a terminal. The script
-compiles with two parallel jobs, runs the C++ tests, and installs the executable
-under `~/.local/lib/omaflip/`. Nothing runs as root.
-
-From a local development checkout:
-
-```sh
-./scripts/build
-./scripts/install-dev
-```
-
-The development installer copies source into the normal user plugin directory
-(no symlinks), validates it, and enables the widget. It refuses to overwrite an
-existing installation; use the normal Git-based plugin update workflow for
-published versions. See [development](docs/development.md) for iteration.
+The plugin manifest has no build hook; adding the repository does not compile
+`omaflip`. **Build / repair backend** in the panel opens `scripts/build` if the
+binary is missing. See [development](docs/development.md) for iteration.
 
 ## Permissions / udev
 
@@ -104,36 +134,10 @@ The rule grants the active local user access to the exact Flipper serial
 descriptors. It does not make devices world-writable, add arbitrary groups, or
 run the shell as root. Non-seat/headless sessions need their administrator's
 device-access policy. DFU write permissions are deliberately not installed in
-this read-only milestone.
+this release.
 
-Remove the optional rule separately when uninstalling:
-
-```sh
-sudo rm /etc/udev/rules.d/70-omaflip.rules
-sudo udevadm control --reload-rules
-```
-
-## Usage
-
-Connect the Flipper. Click **󰓻 Flipper** in the bar. Once the CLI information
-request succeeds, the label shows its reported device name. Select a device
-when multiple devices are attached. Open **Device details** for the port,
-hardware, power health, RPC status, and last-read timestamp.
-
-Use Up/Down or J/K, Tab/Shift+Tab, Enter/Space, and Escape. Long details scroll
-with the mouse; moving the keyboard cursor keeps the selected action visible.
-The panel also supports Omarchy's normal shell routes:
-
-```sh
-omarchy-shell shell summon io.github.howieduhzit.omaflip '{}'
-omarchy-shell shell hide io.github.howieduhzit.omaflip
-```
-
-**Auto-connect** and **Bar label** controls persist through Omarchy's scoped
-settings API. `autoConnect`, `compact`, and `preferredDevice` live in the
-widget's `shell.json` entry. Auto-connect off leaves discovery active and
-requires a manual Retry to read the device. Disabling it does not interrupt a
-read already in flight. Duplicate USB serials are never used to collapse devices.
+The optional udev rule is installed only when you choose **Setup Device Access**
+and authenticate. Duplicate USB serials are never used to collapse devices.
 
 ## Firmware support
 
@@ -156,8 +160,8 @@ flash, claim a serial-to-DFU identity mapping, or open arbitrary STM32 devices.
 ## Developer Mode and FAP workflow
 
 The foundation's diagnostics expose actual USB and firmware fields without a
-mock layer. Dev uses upstream `ufbt` when it is already on PATH (`python3 -m pip install
---upgrade ufbt`). Deploy is OmaFlip RPC, not `ufbt flash`. See [roadmap](docs/roadmap.md).
+mock layer. Dev uses upstream `ufbt` when it is on PATH (`pipx install ufbt` on Arch).
+Deploy is OmaFlip RPC, not `ufbt flash`. See [roadmap](docs/roadmap.md).
 
 ## Troubleshooting
 
@@ -194,16 +198,6 @@ qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml Service.qml qml/*.qm
 Unit tests use explicit pseudoterminal fixtures, isolated from production.
 Hardware tests are a separate acceptance checklist. There is no runtime mock
 switch and no generated fallback device information.
-
-## Uninstallation
-
-```sh
-omarchy plugin remove io.github.howieduhzit.omaflip --yes
-```
-
-Omarchy removes its checkout and configuration. The independently built backend
-under `~/.local/lib/omaflip/` and any installed udev rule are separate, optional
-cleanup steps. No firmware or device files are changed by this release.
 
 ## License
 
