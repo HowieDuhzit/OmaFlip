@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ -x "$repo_dir/build/omaflip" ]]; then
+  exec "$repo_dir/build/omaflip" --stdio
+elif [[ -x "$HOME/.local/lib/omaflip/omaflip" ]]; then
+  exec "$HOME/.local/lib/omaflip/omaflip" --stdio
+fi
+echo "OmaFlip backend is not built. Run scripts/build in the plugin directory, then choose Restart service." >&2
+exit 127

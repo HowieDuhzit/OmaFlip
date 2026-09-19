@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+printf '%s\n' 'OmaFlip device access setup' 'This installs a udev rule granting the active local user access to Flipper USB serial devices.' 'Runtime does not use root. Reconnect your Flipper after installation.'
+read -r -p 'Install the rule now? [y/N] ' answer
+[[ "$answer" == y || "$answer" == Y ]] || exit 0
+sudo install -m644 "$repo_dir/udev/70-omaflip.rules" /etc/udev/rules.d/70-omaflip.rules
+sudo udevadm control --reload-rules
+printf '%s\n' 'Rule installed. Unplug and reconnect your Flipper Zero.'
+read -r -p 'Press Enter to close. ' _

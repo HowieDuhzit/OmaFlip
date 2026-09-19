@@ -1,0 +1,23 @@
+name: Backend
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install native build dependencies
+        run: pacman -Syu --noconfirm --needed cmake gcc qt6-base systemd pkgconf python git
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --parallel 2
+      - name: Test native transport and IPC
+        run: |
+          ctest --test-dir build --output-on-failure
+          python3 tests/test_ipc.py
+# Shell/QML and physical-device acceptance require an Omarchy host; see docs/validation.md.
