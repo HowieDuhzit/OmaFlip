@@ -42,6 +42,7 @@ Item {
     }
     function refresh() {
         if (selectedKey) send({op: "refresh", key: selectedKey})
+        else send({op: "refresh"})
     }
     function selectDevice(key) { send({op: "select", key: key}) }
     function remoteStart() { if (selectedKey) send({op: "remoteStart", key: selectedKey}) }
@@ -54,10 +55,24 @@ Item {
     function input(button, type) { if (selectedKey) send({op: "input", key: selectedKey, button: button, type: type || "short"}) }
     function screenshot() { if (selectedKey) send({op: "screenshot", key: selectedKey}) }
     property var fileJobs: []
+    property double lastFilePumpMs: 0
+    function deviceByKey(key) {
+        for (let d of devices) if (d.key === key) return d
+        return null
+    }
     function pumpFiles() {
         if (!fileJobs.length) return
-        const device = selectedDevice
-        if (!device || !device.files || device.files.busy) return
+        const head = fileJobs[0]
+        const target = head && head.key ? deviceByKey(head.key) : selectedDevice
+        if (!target || !target.files || target.files.busy) {
+            if (lastFilePumpMs && Date.now() - lastFilePumpMs > 30000) {
+                fileJobs.shift()
+                lastFilePumpMs = Date.now()
+                pumpFiles()
+            }
+            return
+        }
+        lastFilePumpMs = Date.now()
         send(fileJobs.shift())
     }
     function enqueueFile(job) {
@@ -75,6 +90,8 @@ Item {
     function filesRename(oldPath, newPath) { enqueueFile({op: "filesRename", oldPath: oldPath, newPath: newPath}) }
     function filesDelete(path, recursive) { enqueueFile({op: "filesDelete", path: path, recursive: !!recursive}) }
     property bool cliRestart: false
+    property string cliRestartKey: ""
+    property double cliRestartMs: 0
     function cliStart() { if (selectedKey) send({op: "cliStart", key: selectedKey}) }
     function cliStop() { if (selectedKey) send({op: "cliStop", key: selectedKey}) }
     function cliSend(text) { if (selectedKey) send({op: "cliSend", key: selectedKey, text: text}) }
@@ -83,6 +100,8 @@ Item {
     function cliReconnect() {
         if (!selectedKey) return
         cliRestart = true
+        cliRestartKey = selectedKey
+        cliRestartMs = Date.now()
         send({op: "cliStop", key: selectedKey})
     }
     function appsStart() { if (selectedKey) send({op: "appsStart", key: selectedKey}) }
@@ -104,9 +123,13 @@ Item {
         if (selectedKey) send({op: "backupRestore", key: selectedKey, archive: archive, confirmOrigin: !!confirmOrigin, confirmVersion: !!confirmVersion})
     }
     function firmwareCheck(provider) {
+        if (!selectedKey) return
         send({op: "firmwareCheck", key: selectedKey, channel: "release", provider: provider || "official"})
     }
-    function firmwareDownload() { send({op: "firmwareDownload", key: selectedKey}) }
+    function firmwareDownload() {
+        if (!selectedKey) return
+        send({op: "firmwareDownload", key: selectedKey})
+    }
     function firmwareApply(replaceOrigin) { if (selectedKey) send({op: "firmwareApply", key: selectedKey, replaceOrigin: !!replaceOrigin}) }
     function packsCheck() { send({op: "packsCheck"}) }
     function packsDownload(id) { send({op: "packsDownload", id: id}) }
@@ -122,6 +145,8 @@ Item {
     function devInstallUfbt() { if (selectedKey) send({op: "devInstallUfbt", key: selectedKey}) }
     function devDeploy(overwrite) { if (selectedKey) send({op: "devDeploy", key: selectedKey, overwrite: !!overwrite}) }
     function devInspect(kind, arg) { if (selectedKey) send({op: "devInspect", key: selectedKey, kind: kind, arg: arg || ""}) }
+    function companionStart() { if (selectedKey) send({op: "companionStart", key: selectedKey}) }
+    function companionStop() { if (selectedKey) send({op: "companionStop", key: selectedKey}) }
     function restart() {
         serviceError = ""
         if (backend.running) {
@@ -147,19 +172,22 @@ Item {
             devices = snapshot.devices
             selectedKey = snapshot.selected
             backendVersion = snapshot.version || ""
-            serviceError = snapshot.error.reason || ""
+            serviceError = snapshot.error && snapshot.error.reason ? String(snapshot.error.reason).slice(0, 2000) : ""
             ready = true
             firmware = snapshot.firmware || {}
             packs = snapshot.packs || {}
+            if (selectedKey !== cliRestartKey) cliRestart = false
+            else if (cliRestart && Date.now() - cliRestartMs > 15000) cliRestart = false
             pumpFiles()
-            if (cliRestart) {
+            if (cliRestart && selectedKey === cliRestartKey) {
                 const device = selectedDevice
                 if (!device || !device.cli || !device.cli.open) {
                     cliRestart = false
+                    cliRestartKey = ""
                     cliStart()
                 }
             }
-        } catch (error) { serviceError = String(error) }
+        } catch (error) { serviceError = String(error).slice(0, 2000) }
     }
     Process {
         id: backend
@@ -170,8 +198,9 @@ Item {
         stdout: SplitParser { onRead: data => root.accept(data) }
         stderr: SplitParser {
             onRead: data => {
+                const chunk = String(data).slice(0, 2000)
                 root.diagnostics = (root.diagnostics + data + "\n").slice(-16384)
-                root.serviceError = data
+                if (!root.ready) root.serviceError = chunk
             }
         }
         onExited: (exitCode, exitStatus) => {
@@ -186,4 +215,21 @@ Item {
         }
     }
     Component.onDestruction: backend.running = false
+
+    function statusSummary() {
+        if (!ready) return serviceError || "Error"
+        if (selectedDevice) return selectedDevice.state || "Connected"
+        return devices.length ? "Detecting" : "Disconnected"
+    }
+
+    IpcHandler {
+        target: "io.github.howieduhzit.omaflip-service"
+        function refresh(): string {
+            root.refresh()
+            return "ok"
+        }
+        function status(): string {
+            return root.statusSummary()
+        }
+    }
 }

@@ -6,9 +6,9 @@ Rectangle {
     property string text: ""
     property bool selected: false
     property color foreground: Color.foreground
-    property color accentColor: "#3B82F6"
+    property color accentColor: Color.accent
     signal triggered()
-    implicitHeight: Style.space(32)
+    implicitHeight: Style.space(28)
     radius: 8
     color: selected ? Qt.alpha(root.accentColor, 0.15) : (mouse.containsMouse ? Qt.alpha(root.foreground, 0.08) : "transparent")
     border.width: selected ? 1 : 0

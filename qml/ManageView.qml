@@ -27,13 +27,18 @@ Column {
     property string confirmKind: ""
     property string seenError: ""
 
+    property string restoreNote: ""
     function current() { return backups[cursor] || null }
     function currentPack() { return installed[packCursor] || null }
     function currentCatalog() { return catalog[catalogCursor] || null }
     function requestRestore() {
         const item = current()
         if (!item || !item.archive) return
-        if (item.compat === "target_mismatch") return
+        if (item.compat === "target_mismatch") {
+            restoreNote = "This backup targets a different hardware revision and cannot be restored here."
+            return
+        }
+        restoreNote = ""
         confirmKind = item.compat === "origin_mismatch" ? "origin" : (item.compat === "version_mismatch" ? "version" : "restore")
     }
     function requestApply() {
@@ -101,13 +106,13 @@ Column {
     }
     Text {
         width: parent.width
-        visible: !!manage.error
+        visible: !!manage.error || !!restoreNote
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
         color: root.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
-        text: manage.error || ""
+        text: manage.error || restoreNote || ""
     }
 
     Row {

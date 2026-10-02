@@ -15,9 +15,12 @@ Column {
     readonly property var fam: dev.fam && typeof dev.fam === "object" ? dev.fam : ({})
     property string confirmKind: ""
     property string inspectKind: "ping"
+    property string lastAppliedProject: ""
 
     function applyProject() {
         const path = projectInput.text.trim()
+        if (path === lastAppliedProject) return
+        lastAppliedProject = path
         if (service) service.devProject(path)
         if (hostWidget && path) hostWidget.persist("devProject", path)
     }

@@ -36,8 +36,11 @@ Column {
         commandInput.text = ""
     }
     function isDestructive(text) {
-        const t = String(text).trim().toLowerCase()
-        return t === "power off" || t.indexOf("power reboot") === 0 || t === "factory_reset" || t.indexOf("update install") === 0
+        const t = String(text).trim().toLowerCase().replace(/\s+/g, " ")
+        return t === "power off" || t.indexOf("power reboot") === 0 || t === "reboot"
+            || t === "factory_reset" || t.indexOf("update install") === 0
+            || t.indexOf("storage erase") === 0 || t === "dfu"
+            || t.indexOf("rm ") === 0 || t.indexOf("format") === 0
     }
     function historyPrev() {
         if (!history.length) return

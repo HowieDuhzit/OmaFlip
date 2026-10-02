@@ -25,10 +25,10 @@ Ui.BarWidget {
             setting("notifyConnect", true), setting("notifyError", true))
     }
     function persist(name, value) {
-        const entry = Object.assign({}, settings, {id: moduleName})
+        const base = (settings && typeof settings === "object") ? settings : {}
+        const entry = Object.assign({}, base, {id: moduleName})
         entry[name] = value
-        settings = entry
-        if (bar?.shell) bar.shell.updateEntryInline(moduleName, entry)
+        if (bar?.shell && typeof bar.shell.updateEntryInline === "function") bar.shell.updateEntryInline(moduleName, entry)
     }
     onBarChanged: injectPanel()
     onServiceChanged: configure()
@@ -49,7 +49,7 @@ Ui.BarWidget {
         bar: root.bar
         text: root.vertical || root.setting("compact", false) ? "󰓻" : "󰓻  " + root.deviceName
         tooltipText: "OmaFlip · " + (root.service ? root.service.state : "Service unavailable")
-            + (root.device && root.device.power.charge_level !== undefined ? " · " + root.device.power.charge_level + "%" : "")
+            + (root.device && root.device.power && root.device.power.charge_level !== undefined ? " · " + root.device.power.charge_level + "%" : "")
         Accessible.role: Accessible.Button
         Accessible.name: "OmaFlip " + root.deviceName + " " + (root.service ? root.service.state : "unavailable")
         Accessible.onPressAction: root.toggle()

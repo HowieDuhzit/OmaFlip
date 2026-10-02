@@ -48,7 +48,7 @@ Column {
             ctx.fillStyle = "#0c0c0c"
             ctx.fillRect(0, 0, width, height)
             const bytes = root.decodeB64(root.frameData)
-            if (bytes.length < 1024) return
+            if (!root.frameData || bytes.length < 1024) return
             const scale = root.pixel
             const w = 128, h = 64
             ctx.fillStyle = "#dcdcdc"
@@ -174,7 +174,7 @@ Column {
     }
     Text {
         width: parent.width
-        visible: root.service && root.service.selectedDevice && root.service.selectedDevice.screenshots && root.service.selectedDevice.screenshots.length
+        visible: !!(root.service && root.service.selectedDevice && root.service.selectedDevice.screenshots && root.service.selectedDevice.screenshots.length)
         text: {
             const shots = root.service && root.service.selectedDevice ? root.service.selectedDevice.screenshots : null
             return shots && shots.length ? "Last PNG: " + shots[0] : ""

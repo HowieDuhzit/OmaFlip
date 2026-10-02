@@ -434,7 +434,7 @@ Column {
 
     Text {
         width: parent.width
-        visible: files.preview && files.preview.path
+        visible: !!(files.preview && files.preview.path)
         text: {
             const preview = files.preview || {}
             if (!preview.path) return ""
