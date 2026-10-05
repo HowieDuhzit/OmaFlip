@@ -19,6 +19,14 @@ def helper():
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_ci_trusts_only_the_exact_checked_out_workspace(self):
+        workflow = (ROOT / ".github/workflows/backend.yml").read_text()
+        trust = 'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+        self.assertIn(trust, workflow)
+        self.assertLess(workflow.index("uses: actions/checkout@"), workflow.index(trust))
+        self.assertLess(workflow.index(trust), workflow.index("run: tests/run"))
+        self.assertNotIn('safe.directory "*"', workflow)
+
     def test_clean_source_identity_rejects_files_not_bound_to_head(self):
         release = helper()
         import subprocess

@@ -48,15 +48,17 @@ and builds/verifies/rebuilds source-bound release assets. Arch package inputs
 remain rolling. Local Docker execution was unavailable because daemon access was
 denied; local build/extraction tests are not a claim of successful remote CI.
 
-`python tests/test_release.py -v` passed all four integrity/source-boundary
-regressions. `python tests/test_install.py --host -v` passed all four installer
+`python tests/test_release.py -v` passed five regressions: four integrity/source
+boundaries plus an exact-workspace CI Git-trust check. The first candidate's
+GitHub packaging step reproduced container checkout ownership rejection; CI now
+trusts only `$GITHUB_WORKSPACE`, not wildcard paths. `python tests/test_install.py --host -v` passed all four installer
 checks: complete fresh-copy surface, refusal to overwrite existing modifications,
 missing-backend refusal, and the installed Omarchy removal script's backup and
 unrelated-state preservation. HOME and shell commands were isolated test fixtures;
 these are filesystem/tooling checks, not a second production install/removal.
 
 Final local `tests/run --ui` passed: native QtTest reported 70 passed, zero failed
-or skipped; IPC reported four passed; release-integrity tests reported four passed;
+or skipped; IPC reported four passed; release/CI-integrity tests reported five passed;
 portable installer tests reported three passed. The optional isolated host-removal
 check also passed, bringing that installer invocation to four passed. Hosted UI
 retained 63 assertions and 52 Qt 6 test cases, with no QML binding/layout errors.

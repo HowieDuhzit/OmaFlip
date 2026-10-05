@@ -15,6 +15,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1, verified upstream tag
         with:
           persist-credentials: false
+      - name: Trust the exact container checkout for release Git metadata
+        # The mounted workspace can belong to the runner UID rather than container root.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Required portable backend, IPC and static checks
         run: tests/run
       - name: Build source-bound release assets
