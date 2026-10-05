@@ -1,6 +1,11 @@
 # Hardware matrix
 
-Recorded **2026-09-19**. Device serials omitted.
+The original detailed matrix below was recorded **2026-09-19**. Device serials
+are omitted. During v1.3.0 release preparation the redesigned installed panel was
+observed Connected and the real Remote stream was captured again. The maintainer
+confirmed hardware testing was already completed and asked not to repeat device
+writes. That confirmation is recorded as maintainer-reported acceptance; it does
+not replace independently measured rows or expand the original firmware scope.
 
 | Host | Flipper | Firmware origin | Target | Result |
 | --- | --- | --- | --- | --- |

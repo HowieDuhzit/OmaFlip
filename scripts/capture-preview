@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Render release previews with the real QML panel and fictional fixtures."""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import tempfile
+
+REPO = Path(__file__).resolve().parents[1]
+PAGES = ("overview", "remote", "files", "cli", "apps", "manage", "dev", "companion", "disconnected")
+NAMES = {"overview": "connected", "manage": "backup"}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=REPO, help="Output root containing preview.png and screenshots/")
+    parser.add_argument("--include-remote-fixture", action="store_true", help="Also write remote-fixture.png; never overwrites the live-device remote.png")
+    args = parser.parse_args()
+    host = Path(os.environ.get("OMAFLIP_TEST_HOST", "/usr/share/omarchy/shell"))
+    engine = shutil.which("quickshell")
+    if not engine or not (host / "Ui/Panel.qml").is_file() or not os.environ.get("WAYLAND_DISPLAY"):
+        parser.error("Requires quickshell, installed Omarchy Ui/Commons, and an active Wayland display")
+    scratch = Path(os.environ.get("TMPDIR", Path.home() / ".hermes/cache/scratch"))
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="omaflip-preview-", dir=scratch) as directory:
+        stage = Path(directory)
+        (stage / "qs").mkdir()
+        for module in ("Commons", "Ui"):
+            (stage / module).symlink_to(host / module, target_is_directory=True)
+            (stage / "qs" / module).symlink_to(host / module, target_is_directory=True)
+        shutil.copy2(REPO / "Panel.qml", stage / "Panel.qml")
+        shutil.copytree(REPO / "qml", stage / "qml")
+        for source in (REPO / "tests/ui").glob("*.qml"):
+            shutil.copy2(source, stage / source.name)
+        artifacts = stage / "captures"
+        artifacts.mkdir()
+        env = dict(os.environ, QT_QPA_PLATFORM="wayland", QT_QUICK_BACKEND="software", QML_IMPORT_PATH=str(stage),
+                   NO_COLOR="1", OMAFLIP_TEST_ARTIFACTS=str(artifacts))
+        result = subprocess.run([engine, "--no-color", "--path", str(stage / "panel_capture.qml")],
+                                cwd=stage, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
+        print(result.stdout, end="")
+        bad = ("OMAFLIP_CAPTURE_FAIL", "ReferenceError:", "TypeError:", "Binding loop", "Cannot assign", "Unable to assign", "is not a type", "QWARN", "WARN scene")
+        if result.returncode or "OMAFLIP_CAPTURE_DONE count=9" not in result.stdout or any(token in result.stdout for token in bad):
+            raise SystemExit("Preview rendering failed; existing previews were not replaced")
+        images = []
+        for page in PAGES:
+            source = artifacts / f"panel-{page}.png"
+            raw = source.read_bytes()
+            if raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+                raise SystemExit(f"Invalid PNG: {source}")
+            width, height = struct.unpack(">II", raw[16:24])
+            if not 100 <= width <= 4096 or not 100 <= height <= 4096:
+                raise SystemExit(f"Invalid dimensions: {source}: {width}x{height}")
+            images.append((page, source, width, height, len(raw)))
+        output = args.output.resolve()
+        screenshots = output / "screenshots"
+        screenshots.mkdir(parents=True, exist_ok=True)
+        for page, source, width, height, size in images:
+            if page == "remote" and not args.include_remote_fixture:
+                continue
+            name = "remote-fixture" if page == "remote" else NAMES.get(page, page)
+            target = screenshots / f"{name}.png"
+            shutil.copy2(source, target)
+            print(json.dumps({"page": page, "path": str(target), "width": width, "height": height, "bytes": size}))
+        shutil.copy2(screenshots / "connected.png", output / "preview.png")
+        print(f"Preview: {output / 'preview.png'} (identical to screenshots/connected.png)")
+
+
+if __name__ == "__main__":
+    main()

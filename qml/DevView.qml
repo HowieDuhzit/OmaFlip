@@ -6,22 +6,29 @@ Column {
     property var service: null
     property var hostWidget: null
     property color foreground: Color.foreground
-    spacing: Style.space(8)
+    spacing: Style.space(10)
 
     readonly property var dev: {
         const device = service && service.selectedDevice
         return device && device.dev && typeof device.dev === "object" ? device.dev : ({open: false})
     }
     readonly property var fam: dev.fam && typeof dev.fam === "object" ? dev.fam : ({})
+    readonly property bool inputActive: projectInput.activeFocus || appIdInput.activeFocus
+    readonly property bool idle: !!service && !!dev.ready && !dev.busy
+    readonly property bool projectValid: projectInput.text.trim().indexOf("/") === 0 && projectInput.text.indexOf("..") < 0
+    readonly property bool projectApplied: projectValid && projectInput.text.trim() === (dev.project || "")
+    readonly property bool appIdValid: /^[a-z][a-z0-9_]{0,31}$/.test(appIdInput.text.trim())
+    readonly property bool canDeploy: idle && projectApplied && !!dev.fap
     property string confirmKind: ""
     property string inspectKind: "ping"
     property string lastAppliedProject: ""
+    property bool inspectorExpanded: false
 
     function applyProject() {
         const path = projectInput.text.trim()
-        if (path === lastAppliedProject) return
+        if (!idle || !projectValid || path === lastAppliedProject) return
         lastAppliedProject = path
-        if (service) service.devProject(path)
+        service.devProject(path)
         if (hostWidget && path) hostWidget.persist("devProject", path)
     }
     function fillProject() {
@@ -31,31 +38,42 @@ Column {
         if (projectInput.text) applyProject()
     }
     function runConfirm() {
-        if (!service) return
+        if (!canDeploy) return
         if (confirmKind === "deploy") service.devDeploy(true)
         confirmKind = ""
     }
-
-    Text {
-        width: parent.width
-        text: dev.ready ? "Developer" : "Starting Dev…"
-        color: root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        font.bold: true
+    function syncProject() {
+        if (!visible || !service || !dev.ready) return
+        fillProject()
+        if (!lastAppliedProject) applyProject()
     }
-    Text {
+    onServiceChanged: {
+        lastAppliedProject = ""
+        confirmKind = ""
+        Qt.callLater(root.syncProject)
+    }
+    onDevChanged: Qt.callLater(root.syncProject)
+    onVisibleChanged: if (visible) Qt.callLater(root.syncProject)
+
+    Row {
         width: parent.width
-        wrapMode: Text.Wrap
-        textFormat: Text.PlainText
-        color: Qt.alpha(root.foreground, 0.75)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        text: {
-            if (!dev.ufbt && !dev.ufbtCommand) return "ufbt is missing. Choose Install ufbt, then Build."
-            if (!dev.ufbt) return "ufbt will run as python3 -m ufbt. Install ufbt for a PATH binary."
-            const fam = root.fam.appid ? (root.fam.appid + (root.fam.name ? " · " + root.fam.name : "")) : "No application.fam"
-            return "ufbt · " + fam + (dev.fap ? " · FAP ready" : "")
+        spacing: Style.space(8)
+        Rectangle {
+            width: Style.space(8)
+            height: width
+            radius: width / 2
+            anchors.verticalCenter: parent.verticalCenter
+            color: dev.error ? Color.urgent : (dev.ready ? Color.accent : Qt.alpha(root.foreground, 0.35))
+        }
+        Text {
+            width: parent.width - Style.space(16)
+            text: !root.service ? "No device selected" : (dev.busy ? "Developer · working…" : (dev.ready ? "Developer · ready" : (dev.error ? "Developer · unavailable" : "Connecting developer session…")))
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: root.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            font.bold: true
         }
     }
     Text {
@@ -63,83 +81,88 @@ Column {
         visible: !!dev.error
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
-        color: root.foreground
+        color: Color.urgent
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
-        text: dev.error || ""
+        text: "Developer: " + (dev.error || "")
     }
 
-    Text {
+    Column {
         width: parent.width
-        text: "Project folder"
-        color: Qt.alpha(root.foreground, 0.55)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-    }
-    TextInput {
-        id: projectInput
-        width: parent.width
-        color: root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        selectionColor: Qt.alpha(root.foreground, 0.25)
-        selectedTextColor: root.foreground
-        onAccepted: root.applyProject()
-        onEditingFinished: root.applyProject()
-        Component.onCompleted: root.fillProject()
-    }
-    onVisibleChanged: if (visible) root.fillProject()
-    Text {
-        width: parent.width
-        text: "App ID for create"
-        color: Qt.alpha(root.foreground, 0.55)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-    }
-    TextInput {
-        id: appIdInput
-        width: parent.width
-        color: root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        selectionColor: Qt.alpha(root.foreground, 0.25)
-        selectedTextColor: root.foreground
-        text: "hello_app"
+        spacing: Style.space(6)
+        Text {
+            text: "PROJECT"
+            color: Qt.alpha(root.foreground, 0.6)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            font.bold: true
+        }
+        InputField {
+            id: projectInput
+            width: parent.width
+            foreground: root.foreground
+            placeholderText: "Absolute project folder, e.g. /home/user/my_app"
+            enabled: !dev.busy && root.confirmKind === ""
+            onAccepted: root.applyProject()
+            onEditingFinished: root.applyProject()
+            Component.onCompleted: root.fillProject()
+        }
+        Text {
+            width: parent.width
+            text: !root.projectValid ? "Choose an absolute folder. Press Enter to apply." : (!root.projectApplied ? "Press Enter to apply this folder." : (root.fam.appid ? root.fam.appid + (root.fam.name ? " · " + root.fam.name : "") : "No application.fam · create a template or choose an existing app."))
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            color: Qt.alpha(root.foreground, 0.65)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
+        Flow {
+            width: parent.width
+            spacing: Style.space(6)
+            ToolButton {
+                text: "Build"
+                foreground: root.foreground
+                primary: true
+                enabled: root.idle && root.projectApplied && !!root.fam.appid && root.confirmKind === ""
+                onTriggered: { root.applyProject(); root.service.devBuild() }
+            }
+            ToolButton {
+                text: "Lint"
+                foreground: root.foreground
+                enabled: root.idle && root.projectApplied && !!root.fam.appid && root.confirmKind === ""
+                onTriggered: { root.applyProject(); root.service.devLint() }
+            }
+            ToolButton {
+                text: "Deploy…"
+                foreground: root.foreground
+                enabled: root.canDeploy && root.confirmKind === ""
+                onTriggered: { root.applyProject(); root.confirmKind = "deploy" }
+            }
+        }
+        Text {
+            width: parent.width
+            text: dev.fap ? "Built FAP · " + dev.fap : "Build first to enable deployment."
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            color: Qt.alpha(root.foreground, 0.55)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
     }
 
     Rectangle {
         width: parent.width
-        height: 140
+        height: confirmation.implicitHeight + Style.space(24)
+        visible: root.confirmKind !== ""
         radius: Style.cornerRadius
-        color: Qt.alpha(root.foreground, 0.04)
+        color: Qt.alpha(Color.urgent, 0.07)
         border.width: 1
-        border.color: Qt.alpha(root.foreground, confirmKind ? 0.45 : 0.18)
-        Flickable {
-            id: logScroll
-            anchors.fill: parent
-            anchors.margins: 6
-            clip: true
-            visible: confirmKind === ""
-            contentWidth: width
-            contentHeight: logText.implicitHeight
-            boundsBehavior: Flickable.StopAtBounds
-            Text {
-                id: logText
-                width: logScroll.width
-                text: (dev.log || "") + (dev.inspect ? "\n" + dev.inspect : "")
-                textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
-                color: Qt.alpha(root.foreground, 0.9)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-            }
-            onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
-        }
+        border.color: Qt.alpha(Color.urgent, 0.4)
         Column {
-            anchors.centerIn: parent
-            width: parent.width - Style.space(24)
+            id: confirmation
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
             spacing: Style.space(8)
-            visible: confirmKind !== ""
             Text {
                 width: parent.width
                 wrapMode: Text.Wrap
@@ -149,130 +172,168 @@ Column {
                 font.pixelSize: Style.font.body
                 text: "Upload the built FAP and start it on the Flipper? This replaces an app with the same name."
             }
-            Row {
+            Flow {
+                width: parent.width
                 spacing: Style.space(8)
-                Repeater {
-                    model: [{label: "Confirm", op: "ok"}, {label: "Cancel", op: "no"}]
-                    Rectangle {
-                        required property var modelData
-                        width: 88
-                        height: Style.space(28)
-                        radius: Style.cornerRadius
-                        color: Qt.alpha(root.foreground, 0.08)
-                        border.width: 1
-                        border.color: Qt.alpha(root.foreground, 0.25)
-                        Text { anchors.centerIn: parent; text: modelData.label; color: root.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body }
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: modelData.op === "ok" ? root.runConfirm() : (root.confirmKind = "")
-                        }
-                    }
+                ToolButton {
+                    text: "Confirm deploy"
+                    foreground: root.foreground
+                    destructive: true
+                    enabled: root.canDeploy
+                    onTriggered: root.runConfirm()
                 }
-            }
-        }
-    }
-
-    Flow {
-        width: parent.width
-        spacing: Style.space(6)
-        visible: confirmKind === ""
-        Repeater {
-            model: [
-                {label: "Install ufbt", op: "install"},
-                {label: "Create", op: "create"},
-                {label: "Build", op: "build"},
-                {label: "Lint", op: "lint"},
-                {label: "Update SDK", op: "sdk"},
-                {label: "Deploy", op: "deploy"}
-            ]
-            Rectangle {
-                required property var modelData
-                width: implicitWidth
-                implicitWidth: btn.implicitWidth + Style.space(16)
-                height: Style.space(28)
-                radius: Style.cornerRadius
-                color: Qt.alpha(root.foreground, mouse.containsMouse ? 0.12 : 0.05)
-                border.width: 1
-                border.color: Qt.alpha(root.foreground, 0.25)
-                Text {
-                    id: btn
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: root.foreground
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.body
-                }
-                MouseArea {
-                    id: mouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (!root.service) return
-                        root.applyProject()
-                        if (modelData.op === "install") root.service.devInstallUfbt()
-                        else if (modelData.op === "create") root.service.devCreate(appIdInput.text)
-                        else if (modelData.op === "build") root.service.devBuild()
-                        else if (modelData.op === "lint") root.service.devLint()
-                        else if (modelData.op === "sdk") root.service.devUpdateSdk()
-                        else root.confirmKind = "deploy"
-                    }
+                ToolButton {
+                    text: "Cancel"
+                    foreground: root.foreground
+                    onTriggered: root.confirmKind = ""
                 }
             }
         }
     }
 
     Text {
-        width: parent.width
-        visible: confirmKind === ""
-        text: "Inspector (read-only). GPIO, reboot, factory reset, and DFU stay off."
-        wrapMode: Text.Wrap
-        textFormat: Text.PlainText
-        color: Qt.alpha(root.foreground, 0.65)
+        text: "BUILD & DEVICE OUTPUT"
+        color: Qt.alpha(root.foreground, 0.6)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
+        font.bold: true
     }
-    Flow {
+    Rectangle {
         width: parent.width
-        spacing: Style.space(4)
-        visible: confirmKind === ""
-        Repeater {
-            model: [
-                {label: "Ping", kind: "ping"},
-                {label: "Protobuf", kind: "protobuf"},
-                {label: "Storage", kind: "storage"},
-                {label: "Lock", kind: "lock"},
-                {label: "Time", kind: "datetime"},
-                {label: "Device", kind: "device"},
-                {label: "Power", kind: "power"},
-                {label: "Property", kind: "property"},
-                {label: "Desktop", kind: "desktop"},
-                {label: "Alert", kind: "alert"}
-            ]
-            Rectangle {
-                required property var modelData
-                width: implicitWidth
-                implicitWidth: chip.implicitWidth + Style.space(12)
-                height: Style.space(24)
-                radius: Style.cornerRadius
-                color: Qt.alpha(root.foreground, root.inspectKind === modelData.kind ? 0.12 : 0.04)
-                border.width: 1
-                border.color: Qt.alpha(root.foreground, 0.2)
-                Text {
-                    id: chip
-                    anchors.centerIn: parent
+        height: Style.space(156)
+        radius: Style.cornerRadius
+        color: Qt.alpha(root.foreground, 0.035)
+        border.width: 1
+        border.color: Qt.alpha(root.foreground, 0.16)
+        Flickable {
+            id: logScroll
+            anchors.fill: parent
+            anchors.margins: Style.space(10)
+            clip: true
+            contentWidth: width
+            contentHeight: logText.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+            Text {
+                id: logText
+                width: logScroll.width
+                readonly property string output: (root.dev.log || "") + (root.dev.inspect ? "\n" + root.dev.inspect : "")
+                text: output.length ? output : (root.dev.busy ? "Operation in progress…" : "Build, lint, and inspector output will appear here.")
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: Qt.alpha(root.foreground, output.length ? 0.9 : 0.55)
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+            }
+            onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+        }
+    }
+
+    Column {
+        width: parent.width
+        spacing: Style.space(6)
+        visible: root.confirmKind === ""
+        Text {
+            text: "SETUP & NEW APPLICATION"
+            color: Qt.alpha(root.foreground, 0.6)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            font.bold: true
+        }
+        Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            textFormat: Text.PlainText
+            color: Qt.alpha(root.foreground, 0.65)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            text: dev.ufbt ? "ufbt available · update SDK for the connected firmware." : (dev.ufbtCommand ? "ufbt uses python3 -m ufbt. Install ufbt if the module is missing." : "ufbt unavailable · install before building.")
+        }
+        Flow {
+            width: parent.width
+            spacing: Style.space(6)
+            ToolButton {
+                text: "Install ufbt"
+                foreground: root.foreground
+                enabled: root.idle
+                onTriggered: root.service.devInstallUfbt()
+            }
+            ToolButton {
+                text: "Update SDK"
+                foreground: root.foreground
+                enabled: root.idle && root.projectApplied
+                onTriggered: { root.applyProject(); root.service.devUpdateSdk() }
+            }
+        }
+        InputField {
+            id: appIdInput
+            width: parent.width
+            foreground: root.foreground
+            font.family: "monospace"
+            placeholderText: "New app ID, e.g. hello_app"
+            text: "hello_app"
+            enabled: !dev.busy
+        }
+        Text {
+            width: parent.width
+            text: "New app ID · lowercase letters, digits, underscores; start with a letter. Use an empty project folder."
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: Qt.alpha(root.foreground, 0.55)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
+        ToolButton {
+            text: "Create template"
+            foreground: root.foreground
+            enabled: root.idle && root.projectApplied && root.appIdValid && !root.fam.appid
+            onTriggered: { root.applyProject(); root.service.devCreate(appIdInput.text) }
+        }
+    }
+
+    ToolButton {
+        text: root.inspectorExpanded ? "Hide device inspector" : "Device inspector · read-only"
+        foreground: root.foreground
+        enabled: root.confirmKind === ""
+        onTriggered: root.inspectorExpanded = !root.inspectorExpanded
+    }
+    Column {
+        width: parent.width
+        spacing: Style.space(6)
+        visible: root.inspectorExpanded && root.confirmKind === ""
+        Text {
+            width: parent.width
+            text: "Read-only queries. GPIO, reboot, factory reset, and DFU stay off."
+            wrapMode: Text.Wrap
+            textFormat: Text.PlainText
+            color: Qt.alpha(root.foreground, 0.55)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
+        Flow {
+            width: parent.width
+            spacing: Style.space(4)
+            Repeater {
+                model: [
+                    {label: "Ping", kind: "ping"},
+                    {label: "Protobuf", kind: "protobuf"},
+                    {label: "Storage", kind: "storage"},
+                    {label: "Lock", kind: "lock"},
+                    {label: "Time", kind: "datetime"},
+                    {label: "Device", kind: "device"},
+                    {label: "Power", kind: "power"},
+                    {label: "Property", kind: "property"},
+                    {label: "Desktop", kind: "desktop"},
+                    {label: "Alert", kind: "alert"}
+                ]
+                ToolButton {
+                    required property var modelData
                     text: modelData.label
-                    color: root.foreground
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
+                    foreground: root.foreground
+                    primary: root.inspectKind === modelData.kind
+                    enabled: root.idle
+                    onTriggered: {
                         root.inspectKind = modelData.kind
-                        if (root.service) root.service.devInspect(modelData.kind, modelData.kind === "property" ? "firmware" : "")
+                        root.service.devInspect(modelData.kind, modelData.kind === "property" ? "firmware" : "")
                     }
                 }
             }

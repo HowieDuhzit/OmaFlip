@@ -31,6 +31,8 @@ PB::Main stopStreamRequest(quint32 id);
 PB::Main stopSessionRequest(quint32 id);
 PB::Main inputRequest(quint32 id, PB_Gui::InputKey key, PB_Gui::InputType type);
 PB::Main appStartRequest(quint32 id, const QString& name, const QString& args);
+PB::Main appDataExchangeRequest(quint32 id, const QByteArray& data);
+PB::Main commandResponse(quint32 id, PB::CommandStatus status = PB::CommandStatus::OK);
 PB::Main appExitRequest(quint32 id);
 PB::Main appLockStatusRequest(quint32 id);
 PB::Main propertyGetRequest(quint32 id, const QString& key);

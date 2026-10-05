@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.0 — Persistent workspace and Companion
+
+- Redesign the panel around persistent navigation, a clearer device overview,
+  shared themed controls, and responsive layouts.
+- Improve Files, Apps, CLI, and Developer workflows; separate Backups, Firmware,
+  and Packs; keep destructive operations behind explicit confirmations.
+- Fit the remote LCD to available width and preserve physical D-pad and rotated
+  gesture semantics.
+- Preserve native keyboard editing, sidebar focus, exclusive session cleanup,
+  saved-project reconnect, and acknowledged JavaScript save state.
+- Add the optional Fliparchy Companion session for selected-device desktop
+  controls. Fliparchy must be installed separately on the Flipper.
+- Fix synchronous disconnect/removal crashes across device-session cleanup,
+  release Companion ownership on app exit/RPC failure, and cancel late work.
+- Collect Companion telemetry and theme-action preparation asynchronously with
+  bounded output/deadlines; add PTY lifecycle and cancellation regressions.
+- Add real QML regression tests and reproducible isolated UI previews.
+- Add isolated installer-preservation tests and include packaging tools/previews
+  in development installs.
+- Repair CI dependency setup and release packaging; document QML-cache reload
+  recovery. Hardware workflows were reported tested by the maintainer; firmware
+  flashing and backup restoration were not independently repeated in this pass.
+
 ## 1.2.0 — Remote pointer (2026-09-19)
 
 - Map mouse on the remote screen to Flipper buttons: left click OK, right click

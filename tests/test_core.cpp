@@ -1,6 +1,7 @@
 #include "model.h"
 #include "serial.h"
 #include "rpc.h"
+#include "companion_protocol.h"
 #include "screen.h"
 #include "files.h"
 #include "cli.h"
@@ -20,10 +21,452 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
+// Exercise lifecycle boundaries without exposing a production test/fake mode.
+#include <memory>
+#include "discovery.h"
+#include "manage.h"
+#include <QProcess>
+#define private public
+#include "companion.h"
+#include "backend.h"
+#undef private
+// Backend is deliberately not part of omaflip_core; test its actual cleanup code.
+#include "../service/backend.cpp"
+
 using namespace omaflip;
+namespace {
+class TelemetryHelpers {
+public:
+    explicit TelemetryHelpers(const QByteArray& mode) : previousPath(qgetenv("PATH")) {
+        const QByteArray script = "#!/usr/bin/python3\nimport os, sys, time\n"
+            "mode = '" + mode + "'\n"
+            "with open(os.path.dirname(sys.argv[0]) + '/calls', 'a') as log: log.write('call\\n')\n"
+            "if mode == 'hang': time.sleep(10)\n"
+            "if mode == 'slow': time.sleep(0.3)\n"
+            "if mode == 'oversize': sys.stdout.write('X' * 1000000); sys.stdout.flush(); time.sleep(10)\n"
+            "if mode == 'failed': print('untrusted output'); sys.exit(1)\n"
+            "name = os.path.basename(sys.argv[0])\n"
+            "if name == 'hyprctl': print('{\"id\": 7}')\n"
+            "elif name == 'wpctl': print('Volume: 0.42 [MUTED]')\n"
+            "elif name == 'playerctl': print('Playing|Fixture - Song')\n"
+            "elif sys.argv[1] == 'toggle': print('{\"enabled\": true}')\n"
+            "elif sys.argv[2] == 'list': print('Fixture Theme\\nNext Theme')\n"
+            "elif sys.argv[2] == 'set':\n"
+            " with open(os.path.dirname(sys.argv[0]) + '/selected', 'w') as log: log.write(sys.argv[3])\n"
+            "else: print('Fixture Theme')\n";
+        valid = dir.isValid();
+        for(const auto& name : {"hyprctl", "wpctl", "playerctl", "omarchy"}) {
+            QFile file(dir.path() + '/' + name);
+            valid = valid && file.open(QIODevice::WriteOnly);
+            if(!valid) break;
+            valid = file.write(script) == script.size(); file.close();
+            valid = valid && file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        }
+        qputenv("PATH", dir.path().toLocal8Bit());
+    }
+    ~TelemetryHelpers() { qputenv("PATH", previousPath); }
+    int calls() const {
+        QFile file(dir.path() + "/calls");
+        return file.open(QIODevice::ReadOnly) ? file.readAll().count('\n') : 0;
+    }
+    QTemporaryDir dir;
+    QByteArray previousPath;
+    bool valid = false;
+};
+
+// Real serial/RPC peer on a PTY. Never contacts hardware or desktop commands.
+class CompanionPeer : public QObject {
+public:
+    CompanionPeer() {
+        int slave; char name[128];
+        if(openpty(&master, &slave, name, nullptr, nullptr) != 0) return;
+        close(slave); port = QString::fromLocal8Bit(name);
+        fcntl(master, F_SETFL, O_NONBLOCK);
+        monitor = new QSocketNotifier(master, QSocketNotifier::Read, this);
+        connect(monitor, &QSocketNotifier::activated, this, [this] {
+            char bytes[4096]; const auto n = read(master, bytes, sizeof(bytes));
+            if(n <= 0) return;
+            input.append(bytes, n);
+            if(!rpc) {
+                if(!input.contains("start_rpc_session\r")) return;
+                input.clear(); rpc = true;
+                const QByteArray echo("start_rpc_session\r\n"); (void)write(master, echo.constData(), echo.size());
+                return;
+            }
+            PB::Main request;
+            while(takeDelimited(input, request) == FrameStatus::Ok) {
+                if(request.has_system_ping_request()) {
+                    PB::Main reply; reply.set_command_id(request.command_id());
+                    reply.mutable_system_ping_response()->set_data(request.system_ping_request().data());
+                    send(reply);
+                } else if(request.has_app_start_request()) {
+                    send(commandResponse(request.command_id()));
+                    send(appDataExchangeRequest(200, encodeCompanionFrame(CompanionMessage::Hello, 0, 0, {})));
+                } else if(request.has_app_data_exchange_request()) {
+                    CompanionFrame frame; QString error;
+                    if(decodeCompanionFrame(QByteArray::fromStdString(request.app_data_exchange_request().data()), frame, error)) {
+                        if(frame.type == CompanionMessage::StateSnapshot) states.append(frame.payload);
+                        if(frame.type == CompanionMessage::ActionResult) actions.append(frame.payload);
+                        if(frame.type == CompanionMessage::Pong) ++pongs;
+                    }
+                } else if(request.has_stop_session()) send(commandResponse(request.command_id()));
+            }
+        });
+    }
+    ~CompanionPeer() override { unplug(); }
+    void start(CompanionSession& session) {
+        input.clear(); rpc = false;
+        session.start(port);
+        const QByteArray banner("Fixture\r\n>: "); (void)write(master, banner.constData(), banner.size());
+    }
+    void send(const PB::Main& message) {
+        const auto wire = encodeDelimited(message); (void)write(master, wire.constData(), wire.size());
+    }
+    void unplug() { if(master >= 0) { monitor->setEnabled(false); close(master); master = -1; } }
+    int master = -1;
+    QString port;
+    QSocketNotifier* monitor = nullptr;
+    QByteArray input;
+    bool rpc = false;
+    QList<QByteArray> states;
+    QList<QByteArray> actions;
+    int pongs = 0;
+};
+}
 class CoreTests : public QObject {
     Q_OBJECT
 private slots:
+    void companionStopAfterWriteFailure() {
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        CompanionSession session;
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        session.start(QString::fromLocal8Bit(name));
+        session.phase_ = CompanionSession::Phase::WaitHello;
+        close(master); // Both stop writes run synchronously, before read notification.
+        session.stop();
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(!session.snapshot()["open"].toBool());
+        QVERIFY(!session.timeout_.isActive());
+        session.sendRpc(commandResponse(12)); // Sending after terminal cleanup is harmless.
+        QVERIFY(session.output_.isEmpty());
+    }
+    void companionHelloWriteFailure() {
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        CompanionSession session;
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        QSignalSpy ready(&session, &CompanionSession::ready);
+        session.start(QString::fromLocal8Bit(name));
+        session.phase_ = CompanionSession::Phase::WaitHello;
+        close(master);
+        CompanionFrame hello; hello.type = CompanionMessage::Hello;
+        session.handleFrame(hello);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(ready.size(), 0);
+        QVERIFY(!session.refreshTimer_.isActive());
+    }
+    void companionMalformedAckWriteFailure() {
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        CompanionSession session;
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        session.start(QString::fromLocal8Bit(name));
+        close(master);
+        session.handleRpc(appDataExchangeRequest(12, "malformed"));
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(!session.snapshot()["open"].toBool());
+        QVERIFY(session.output_.isEmpty());
+    }
+    void backendRemoval_data() {
+        QTest::addColumn<QString>("op");
+        for(const auto& op : {"companionStart", "remoteStart", "filesStart", "cliStart", "appsStart", "manageStart", "devStart"})
+            QTest::newRow(op) << QString(op);
+    }
+    void backendRemoval() {
+        QFETCH(QString, op);
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        Backend backend;
+        backend.notifyConnect_ = false; backend.notifyError_ = false;
+        Device device;
+        device.state = State::Connected;
+        device.usb.port = QString::fromLocal8Bit(name);
+        backend.devices_.insert("controlled-pty", device);
+        backend.command({{"op", op}, {"key", "controlled-pty"}});
+        QVERIFY(!backend.holderName(backend.devices_["controlled-pty"]).isEmpty());
+        QPointer<QObject> session;
+        const auto& held = backend.devices_["controlled-pty"];
+        if(held.companion) session = held.companion;
+        else if(held.remote) session = held.remote;
+        else if(held.files) session = held.files;
+        else if(held.cli) session = held.cli;
+        else if(held.apps) session = held.apps;
+        else if(held.manage) session = held.manage;
+        else if(held.dev) session = held.dev;
+        backend.reconcile(); // Real removal path; stop emits synchronously before handshake.
+        QVERIFY(!backend.devices_.contains("controlled-pty"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(session.isNull());
+        const auto reopened = open(name, O_RDWR | O_NOCTTY | O_NONBLOCK);
+        QVERIFY(reopened >= 0);
+        close(reopened); close(master);
+    }
+    void backendRemovalCancelsReadyCompanion() {
+        TelemetryHelpers helpers("slow"); QVERIFY(helpers.valid);
+        CompanionPeer peer; QVERIFY(peer.master >= 0);
+        Backend backend;
+        backend.notifyConnect_ = false; backend.notifyError_ = false;
+        Device device; device.state = State::Connected; device.usb.port = peer.port;
+        backend.devices_.insert("controlled-pty", device);
+        backend.startCompanion("controlled-pty");
+        auto* session = backend.devices_["controlled-pty"].companion;
+        QVERIFY(session);
+        QPointer<CompanionSession> retained(session);
+        QSignalSpy ready(session, &CompanionSession::ready);
+        QSignalSpy events(&backend, &Backend::event);
+        peer.start(*session);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(helpers.calls(), 6, 200);
+        QVERIFY(session->telemetryInFlight_);
+        backend.reconcile();
+        QVERIFY(!backend.devices_.contains("controlled-pty"));
+        const auto finalEvents = events.size();
+        QTest::qWait(800);
+        QVERIFY(retained.isNull());
+        QCOMPARE(peer.states.size(), 0);
+        QCOMPARE(events.size(), finalEvents);
+    }
+    void companionTerminalRpc_data() {
+        QTest::addColumn<int>("phase");
+        QTest::addColumn<int>("status");
+        QTest::addColumn<bool>("closed");
+        for(const auto phase : {CompanionSession::Phase::Launch, CompanionSession::Phase::WaitHello, CompanionSession::Phase::Ready}) {
+            const auto name = QByteArray::number(static_cast<int>(phase));
+            QTest::newRow((name + "-closed").constData()) << static_cast<int>(phase) << int(PB::OK) << true;
+            QTest::newRow((name + "-not-running").constData()) << static_cast<int>(phase) << int(PB::ERROR_APP_NOT_RUNNING) << false;
+            QTest::newRow((name + "-decode-error").constData()) << static_cast<int>(phase) << int(PB::ERROR_DECODE) << false;
+        }
+    }
+    void companionTerminalRpc() {
+        QFETCH(int, phase); QFETCH(int, status); QFETCH(bool, closed);
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        CompanionSession session;
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        QSignalSpy stopped(&session, &CompanionSession::stopped);
+        session.start(QString::fromLocal8Bit(name));
+        session.phase_ = static_cast<CompanionSession::Phase>(phase);
+        session.refreshTimer_.start();
+        PB::Main response;
+        response.set_command_id(999); // Async close/error need not match latest command.
+        response.set_command_status(static_cast<PB::CommandStatus>(status));
+        if(closed) response.mutable_app_state_response()->set_state(PB_App::APP_CLOSED);
+        else response.mutable_empty();
+        const auto wire = encodeDelimited(response);
+        QCOMPARE(write(master, wire.constData(), wire.size()), wire.size());
+        QTRY_VERIFY_WITH_TIMEOUT(!session.snapshot()["open"].toBool(), 500);
+        QCOMPARE(errors.size(), closed ? 0 : 1);
+        QCOMPARE(stopped.size(), closed ? 1 : 0);
+        QVERIFY(!session.refreshTimer_.isActive());
+        QVERIFY(!session.timeout_.isActive());
+        const auto reopened = open(name, O_RDWR | O_NOCTTY | O_NONBLOCK);
+        QVERIFY(reopened >= 0);
+        close(reopened); close(master);
+    }
+    void companionTelemetryDoesNotBlock() {
+        QTemporaryDir helpers;
+        QVERIFY(helpers.isValid());
+        for(const auto& name : {"hyprctl", "wpctl", "playerctl", "omarchy"}) {
+            QFile file(helpers.path() + '/' + name);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("#!/bin/sh\nexec /usr/bin/sleep 2\n");
+            file.close();
+            QVERIFY(file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        }
+        const auto previousPath = qgetenv("PATH");
+        struct RestorePath { QByteArray value; ~RestorePath() { qputenv("PATH", value); } } restore{previousPath};
+        qputenv("PATH", helpers.path().toLocal8Bit());
+        int master, slave; char name[128];
+        QVERIFY(openpty(&master, &slave, name, nullptr, nullptr) == 0);
+        close(slave);
+        CompanionSession session;
+        session.start(QString::fromLocal8Bit(name));
+        session.phase_ = CompanionSession::Phase::Ready;
+        session.timeout_.stop();
+        QElapsedTimer elapsed; elapsed.start();
+        session.sendState();
+        QVERIFY2(elapsed.elapsed() < 100, qPrintable(QString("Telemetry blocked for %1ms").arg(elapsed.elapsed())));
+        bool tick = false;
+        QTimer::singleShot(10, this, [&] { tick = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(tick, 100);
+        session.stop();
+        close(master);
+    }
+    void companionThemeLookupDoesNotBlock() {
+        TelemetryHelpers helpers("hang");
+        QVERIFY(helpers.valid);
+        CompanionPeer peer;
+        QVERIFY(peer.master >= 0);
+        CompanionSession session;
+        peer.start(session);
+        session.phase_ = CompanionSession::Phase::Ready;
+        session.timeout_.stop();
+        QElapsedTimer elapsed; elapsed.start();
+        session.runAction(10, 44); // Only controlled helper executables are on PATH.
+        QVERIFY2(elapsed.elapsed() < 100, qPrintable(QString("Theme lookup blocked for %1ms").arg(elapsed.elapsed())));
+        session.stop();
+    }
+    void companionActionLifecycle_data() {
+        QTest::addColumn<QByteArray>("mode");
+        for(const auto& mode : {"normal", "hang", "oversize", "failed", "missing"})
+            QTest::newRow(mode) << QByteArray(mode);
+    }
+    void companionActionLifecycle() {
+        QFETCH(QByteArray, mode);
+        TelemetryHelpers helpers(mode); QVERIFY(helpers.valid);
+        if(mode == "missing") {
+            QFile file(helpers.dir.path() + "/omarchy");
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            file.write("#!/nonexistent/controlled-test-interpreter\n"); file.close();
+        }
+        CompanionPeer peer; QVERIFY(peer.master >= 0);
+        CompanionSession session;
+        QSignalSpy ready(&session, &CompanionSession::ready);
+        peer.start(session);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 1000);
+        peer.send(appDataExchangeRequest(210, encodeCompanionFrame(CompanionMessage::ActionRequest, 0, 44, QByteArray(1, char(10)))));
+        QTRY_COMPARE_WITH_TIMEOUT(peer.actions.size(), 1, 5500);
+        QCOMPARE(quint8(peer.actions.first()[0]), quint8(10));
+        QCOMPARE(quint8(peer.actions.first()[1]), quint8(mode == "normal" ? 0 : 1));
+        QVERIFY(!session.actionProcess_);
+        QVERIFY(!session.actionTimer_.isActive());
+        if(mode == "normal") {
+            QFile selected(helpers.dir.path() + "/selected");
+            QVERIFY(selected.open(QIODevice::ReadOnly));
+            QCOMPARE(selected.readAll(), QByteArray("Next Theme"));
+        }
+        session.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!session.snapshot()["open"].toBool(), 500);
+    }
+    void companionPublishWriteFailure() {
+        CompanionPeer peer;
+        QVERIFY(peer.master >= 0);
+        CompanionSession session;
+        peer.start(session);
+        session.phase_ = CompanionSession::Phase::Ready;
+        QSignalSpy changes(&session, &CompanionSession::changed);
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        peer.unplug();
+        session.publishTelemetry();
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(changes.size(), 0);
+    }
+    void companionTelemetryBounded_data() {
+        QTest::addColumn<QByteArray>("mode");
+        for(const auto& mode : {"normal", "hang", "oversize", "failed", "missing"})
+            QTest::newRow(mode) << QByteArray(mode);
+    }
+    void companionTelemetryBounded() {
+        QFETCH(QByteArray, mode);
+        TelemetryHelpers helpers(mode);
+        QVERIFY(helpers.valid);
+        if(mode == "missing") for(const auto& name : {"hyprctl", "wpctl", "playerctl", "omarchy"}) {
+            QFile file(helpers.dir.path() + '/' + name);
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            file.write("#!/nonexistent/controlled-test-interpreter\n"); file.close();
+        }
+        CompanionPeer peer;
+        QVERIFY(peer.master >= 0);
+        CompanionSession session;
+        QSignalSpy ready(&session, &CompanionSession::ready);
+        QSignalSpy errors(&session, &CompanionSession::failed);
+        bool coalesced = false;
+        connect(&session, &CompanionSession::ready, this, [&] {
+            const auto generation = session.telemetryGeneration_;
+            for(int i = 0; i < 10; ++i) session.sendState();
+            coalesced = session.telemetryGeneration_ == generation;
+        });
+        peer.start(session);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 1000);
+        QVERIFY(coalesced); // Check while the initial batch is still in flight.
+        peer.send(appDataExchangeRequest(201, encodeCompanionFrame(CompanionMessage::Ping, 0, 123, {})));
+        QTRY_COMPARE_WITH_TIMEOUT(peer.pongs, 1, 200);
+        QTRY_COMPARE_WITH_TIMEOUT(peer.states.size(), 1, 1200);
+        QVERIFY(!session.telemetryInFlight_);
+        QVERIFY(!session.telemetryTimer_.isActive());
+        for(int i = 0; i < 6; ++i) {
+            QVERIFY(!session.telemetryProcesses_[i]);
+            QVERIFY(session.telemetry_[i].out.size() <= 16384);
+            QCOMPARE(session.telemetry_[i].ok, mode == "normal");
+        }
+        if(mode != "missing") QCOMPARE(helpers.calls(), 6);
+        const auto payload = peer.states.first();
+        QCOMPARE(quint8(payload[0]), quint8(mode == "normal" ? 7 : 1));
+        QCOMPARE(quint8(payload[1]), quint8(mode == "normal" ? 42 : 0));
+        QCOMPARE(quint8(payload[2]), quint8(mode == "normal" ? 15 : 0));
+        QVERIFY(payload.contains(mode == "normal" ? "Fixture Theme" : "Omarchy"));
+        QVERIFY(payload.contains(mode == "normal" ? "Fixture - Song" : "No active player"));
+        QCOMPARE(errors.size(), 0);
+        session.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!session.snapshot()["open"].toBool(), 500);
+    }
+    void companionTelemetryCancellation_data() {
+        QTest::addColumn<QString>("mode");
+        for(const auto& mode : {"stop", "unplug", "closed", "error", "restart", "destroy"})
+            QTest::newRow(mode) << QString(mode);
+    }
+    void companionTelemetryCancellation() {
+        QFETCH(QString, mode);
+        TelemetryHelpers helpers("slow");
+        QVERIFY(helpers.valid);
+        CompanionPeer peer;
+        QVERIFY(peer.master >= 0);
+        auto session = std::make_unique<CompanionSession>();
+        QSignalSpy ready(session.get(), &CompanionSession::ready);
+        QSignalSpy changes(session.get(), &CompanionSession::changed);
+        peer.start(*session);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(helpers.calls(), 6, 200);
+        QVERIFY(session->telemetryInFlight_);
+        std::array<QPointer<QProcess>, 6> processes;
+        for(int i = 0; i < 6; ++i) processes[i] = session->telemetryProcesses_[i];
+        const auto generation = session->telemetryGeneration_;
+        QElapsedTimer elapsed; elapsed.start();
+        if(mode == "stop") session->stop();
+        else if(mode == "unplug") peer.unplug();
+        else if(mode == "restart") peer.start(*session);
+        else if(mode == "destroy") session.reset();
+        else {
+            PB::Main response;
+            if(mode == "closed") response.mutable_app_state_response()->set_state(PB_App::APP_CLOSED);
+            else { response.set_command_status(PB::ERROR_APP_NOT_RUNNING); response.mutable_empty(); }
+            peer.send(response);
+        }
+        QVERIFY(elapsed.elapsed() < 100);
+        if(mode == "restart") {
+            QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 1000);
+            QTRY_COMPARE_WITH_TIMEOUT(peer.states.size(), 1, 1000);
+            QVERIFY(session->telemetryGeneration_ > generation);
+            session->stop();
+        } else if(session) QTRY_VERIFY_WITH_TIMEOUT(!session->snapshot()["open"].toBool(), 500);
+        const auto finalChanges = changes.size();
+        QTest::qWait(800); // Let cancelled helpers and the old deadline race teardown.
+        QCOMPARE(changes.size(), finalChanges);
+        QCOMPARE(peer.states.size(), mode == "restart" ? 1 : 0);
+        for(const auto& process : processes) QVERIFY(process.isNull());
+        if(session) {
+            QVERIFY(!session->telemetryInFlight_);
+            QVERIFY(!session->telemetryTimer_.isActive());
+            session->finishTelemetry(0, generation, true); // Stale queued completion cannot publish.
+            QCOMPARE(changes.size(), finalChanges);
+        }
+    }
     void recognition() {
         UsbIdentity usb{"0483", "5740", "Flipper Devices Inc.", "Flipper Control Virtual ComPort", "TEST_ONLY", "/sys/test", "/dev/test"};
         QCOMPARE(classify(usb), UsbKind::FlipperSerial);
@@ -68,6 +511,33 @@ private slots:
         corrupt.append(char(0xff));
         corrupt.append(char(0xff));
         QCOMPARE(takeDelimited(corrupt, ignored), FrameStatus::Corrupt);
+    }
+    void companionProtocol() {
+        const QByteArray payload("\x05", 1);
+        const auto wire = encodeCompanionFrame(CompanionMessage::ActionRequest, 0, 42, payload);
+        QCOMPARE(wire.size(), kCompanionHeaderSize + 1);
+        CompanionFrame frame;
+        QString error;
+        QVERIFY(decodeCompanionFrame(wire, frame, error));
+        QCOMPARE(frame.type, CompanionMessage::ActionRequest);
+        QCOMPARE(frame.requestId, quint16(42));
+        QCOMPARE(frame.payload, payload);
+
+        auto corrupt = wire;
+        corrupt[0] = 'X';
+        QVERIFY(!decodeCompanionFrame(corrupt, frame, error));
+        QVERIFY(error.contains("magic"));
+        QVERIFY(encodeCompanionFrame(CompanionMessage::Error, 0, 0,
+            QByteArray(kCompanionFrameMax, 'x')).isEmpty());
+        QCOMPARE(companionText(QString::fromUtf8("caf\xc3\xa9"), 4), QByteArray("caf"));
+
+        const auto rpc = appDataExchangeRequest(9, wire);
+        QVERIFY(rpc.has_app_data_exchange_request());
+        QCOMPARE(QByteArray::fromStdString(rpc.app_data_exchange_request().data()), wire);
+        const auto ack = commandResponse(9);
+        QCOMPARE(ack.command_id(), 9u);
+        QVERIFY(ack.has_empty());
+        QCOMPARE(ack.command_status(), PB::CommandStatus::OK);
     }
     void screenDecodeAndPng() {
         QByteArray frame(kScreenBytes, '\0');
@@ -734,3 +1204,4 @@ private slots:
 };
 QTEST_GUILESS_MAIN(CoreTests)
 #include "test_core.moc"
+#include "moc_backend.cpp"

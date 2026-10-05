@@ -34,6 +34,44 @@ plugin must destroy the service and release the device. Omarchy rescanning is
 asynchronous; the installer uses bounded retries during setup only, never at
 runtime. Rootless normal operation is mandatory.
 
+## Reproducible checks
+
+Run `./tests/run` for the portable native/IPC/static/release/installer checks.
+`python tests/test_install.py --host -v` additionally exercises the installed
+Omarchy removal script under an isolated HOME, with call-recording shell stubs.
+It verifies file preservation/backup behavior, not production-shell lifecycle. Hosted UI tests require an
+installed Omarchy shell and a Wayland session; run `python tests/test_ui.py -v`
+separately. Fixture screenshots are documented in `tests/ui/README.md` and are
+never loaded by production `Service.qml`.
+
+A Git-managed plugin checkout can be updated with `omarchy plugin update` after
+closing its sessions and disabling it. Preserve local changes before updating.
+After copying or updating QML, confirm the visible layout; matching files and
+working backend IPC do not establish that cached QML was replaced. If the old UI
+persists, use `omarchy-restart-shell`, which briefly restarts bars/panels and refuses
+a live secure-lock restart. Reopen and visually verify OmaFlip afterward.
+
+## UI structure
+
+`Panel.qml` owns the local page selection and exclusive device-session lifecycle.
+Its persistent sidebar becomes wrapped navigation when the available panel width
+is narrow. Opening Settings or Diagnostics releases any tool session; closing the
+panel, switching devices, or losing the selected device releases it as well.
+Inactive tool views receive no service, so stale confirmations cannot operate on
+a newly selected device. Developer project synchronization waits for a ready
+session instead of treating hidden initialization as a successful configuration.
+
+`qml/ToolButton.qml` centralizes themed primary/destructive/disabled/focus states.
+`qml/InputField.qml` retains native text editing, selection, and keyboard focus.
+The panel shortcut catcher is blocked while a tool input is focused. Navigation
+and actions are focusable; confirmation targets stay explicit. Remote LCD colors
+are intentionally fixed, but surrounding controls use Omarchy theme tokens.
+
+Use `/usr/lib/qt6/bin/qmlformat` and `/usr/lib/qt6/bin/qmllint` on systems where
+`/usr/bin` resolves to Qt 5. Standalone Qt tools cannot infer Quickshell's virtual
+`qs.*` namespace from `-I /usr/share/omarchy/shell` alone: missing-import warnings
+are not evidence of a successful hosted runtime check.
+
 Use [validation.md](validation.md) for hardware acceptance. Test serial timeout,
 unsupported commands, permission errors, connection loss mid-response, and
 repeated reconnects. Preserve exact errors and never display stale values after

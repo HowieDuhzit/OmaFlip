@@ -201,6 +201,25 @@ configure flag is false.
 Dev also searches `~/.local/bin` and can run `python3 -m ufbt`. `devInstallUfbt`
 runs `python3 -m pip install --user --upgrade ufbt` as an argument list.
 
+## Fliparchy Companion session
+
+`companionStart` acquires the selected device's serial port and launches
+`/ext/apps/Tools/fliparchy.fap` through application RPC. The executable must be
+installed separately; this repository does not distribute it. App data frames use
+bounded protocol-1.0 messages (`FA` header) over existing RPC, with handshake,
+state exchange, and bounded command execution. Telemetry helpers run asynchronously
+with one batch in flight, a 700 ms deadline, 16 KiB per-helper output caps, and
+lifecycle-generation checks. Theme-action discovery is asynchronous as well.
+`companionStop`, app closure, terminal RPC failure, disconnect, or backend
+destruction cancel work and release serial ownership without late publication.
+
+Only fixed, allowlisted host operations are exposed; untrusted payload text never
+becomes a shell command. Audio/media/workspace/theme and other desktop actions
+still have real user-visible effects, including lock. Trust is the explicitly
+selected local device, not cryptographic device identity. Companion state reads
+include current workspace, audio volume, media metadata, and theme information;
+opening the session opts into sending that local state to the device.
+
 ## Next transport slice (not implemented)
 
 DFU write is not implemented. Do not treat official firmware as a Momentum

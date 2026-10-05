@@ -8,14 +8,20 @@ Rectangle {
     property color foreground: Color.foreground
     property color accentColor: Color.accent
     signal triggered()
-    implicitHeight: Style.space(28)
-    radius: 8
+    property bool keyboardSelected: false
+    implicitHeight: Style.space(38)
+    activeFocusOnTab: true
+    opacity: enabled ? 1 : 0.4
+    Keys.onReturnPressed: if (enabled) triggered()
+    Keys.onEnterPressed: if (enabled) triggered()
+    Keys.onSpacePressed: if (enabled) triggered()
+    radius: Style.cornerRadius
     color: selected ? Qt.alpha(root.accentColor, 0.15) : (mouse.containsMouse ? Qt.alpha(root.foreground, 0.08) : "transparent")
-    border.width: selected ? 1 : 0
-    border.color: selected ? Qt.alpha(root.accentColor, 0.4) : "transparent"
+    border.width: selected || keyboardSelected || activeFocus ? 1 : 0
+    border.color: keyboardSelected || activeFocus ? root.accentColor : Qt.alpha(root.accentColor, 0.4)
     Accessible.role: Accessible.Button
     Accessible.name: text
-    Accessible.onPressAction: root.triggered()
+    Accessible.onPressAction: if (root.enabled) root.triggered()
     Behavior on color { ColorAnimation { duration: 80 } }
     Text {
         anchors.fill: parent

@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QTimer>
 #include <cstdio>
+#include <utility>
 
 namespace omaflip {
 Backend::Backend(QObject* parent) : QObject(parent), discovery_(this), firmwareClient_(this) {
@@ -81,13 +82,16 @@ void Backend::reconcile() {
             const auto previous = lastAnnounced_.take(it.key());
             if(notifyConnect_ && (previous == "Connected" || previous == "Busy"))
                 desktopNotify("device.removed", "low", "Flipper disconnected", "The Flipper was unplugged.");
-            if(it->probe) { it->probe->cancel(); it->probe->deleteLater(); }
-            if(it->remote) { it->remote->stop(); it->remote->deleteLater(); it->remote = nullptr; }
-            if(it->files) { it->files->stop(); it->files->deleteLater(); it->files = nullptr; }
-            if(it->cli) { it->cli->stop(); it->cli->deleteLater(); it->cli = nullptr; }
-            if(it->apps) { it->apps->stop(); it->apps->deleteLater(); it->apps = nullptr; }
-            if(it->manage) { it->manage->stop(); it->manage->deleteLater(); it->manage = nullptr; }
-            if(it->dev) { it->dev->stop(); it->dev->deleteLater(); it->dev = nullptr; }
+            // Detach before stop/cancel: terminal signals may run synchronously.
+            // Retain the local pointer so callbacks cannot invalidate cleanup.
+            if(auto* session = std::exchange(it->probe, nullptr)) { session->cancel(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->remote, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->files, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->cli, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->apps, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->manage, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->dev, nullptr)) { session->stop(); session->deleteLater(); }
+            if(auto* session = std::exchange(it->companion, nullptr)) { session->stop(); session->deleteLater(); }
             transition(*it, State::Disconnected);
             it = devices_.erase(it);
         } else ++it;
@@ -108,7 +112,7 @@ void Backend::reconcile() {
 }
 void Backend::probe(const QString& key) {
     auto it = devices_.find(key);
-    if(it == devices_.end() || it->probe || it->remote || it->files || it->cli || it->apps || it->manage || it->dev || it->usb.port.isEmpty() || it->state == State::Bootloader) return;
+    if(it == devices_.end() || it->probe || it->remote || it->files || it->cli || it->apps || it->manage || it->dev || it->companion || it->usb.port.isEmpty() || it->state == State::Bootloader) return;
     transition(*it, State::Connecting);
     it->error = {}; it->info = {}; it->power = {}; it->rpc = {}; it->warning.clear(); it->sampledAt.clear();
     auto* session = new SerialProbe(this); it->probe = session;
@@ -152,6 +156,7 @@ QJsonObject Backend::snapshot() const {
             {"apps", device.apps ? device.apps->snapshot() : QJsonObject{{"open", false}}},
             {"manage", device.manage ? device.manage->snapshot() : QJsonObject{{"open", false}}},
             {"dev", device.dev ? device.dev->snapshot() : QJsonObject{{"open", false}}},
+            {"companion", device.companion ? device.companion->snapshot() : QJsonObject{{"open", false}}},
             {"screenshots", QJsonArray::fromStringList(device.screenshots)}});
     }
     return {{"protocol", 1}, {"type", "snapshot"}, {"version", OMAFLIP_VERSION},
@@ -181,6 +186,7 @@ QString Backend::holderName(const Device& device) const {
     if(device.apps) return "Apps";
     if(device.manage) return "Device";
     if(device.dev) return "Dev";
+    if(device.companion) return "Companion";
     return {};
 }
 
@@ -482,6 +488,55 @@ void Backend::stopDev(const QString& key) {
     if(it == devices_.end() || !it->dev) { publish(); return; }
     it->dev->stop();
 }
+
+void Backend::startCompanion(const QString& key) {
+    auto it = devices_.find(key);
+    if(it == devices_.end() || it->usb.port.isEmpty() || it->state == State::Bootloader) {
+        error_ = {{"code", "invalid_request"},
+            {"reason", "Companion needs an attached Flipper with a serial port."},
+            {"suggestion", "Connect the device and wait until it is Connected."}};
+        publish(); return;
+    }
+    if(const auto holder = holderName(*it); !holder.isEmpty() && holder != "Companion") {
+        error_ = {{"code", "port_busy"}, {"reason", holder + " is using the serial port."},
+            {"suggestion", "Close " + holder + " before starting Companion."}};
+        publish(); return;
+    }
+    if(it->companion) { publish(); return; }
+    if(it->probe) { it->probe->cancel(); it->probe->deleteLater(); it->probe = nullptr; }
+    if(it->state == State::Connected) transition(*it, State::Busy);
+    auto* session = new CompanionSession(this); it->companion = session;
+    connect(session, &CompanionSession::ready, this, [this,key,session] {
+        auto it = devices_.find(key);
+        if(it == devices_.end() || it->companion != session) return;
+        publish();
+    });
+    connect(session, &CompanionSession::changed, this, [this,key,session] {
+        auto it = devices_.find(key);
+        if(it == devices_.end() || it->companion != session) return;
+        publish();
+    });
+    connect(session, &CompanionSession::failed, this, [this,key,session](const QJsonObject& error) {
+        auto it = devices_.find(key);
+        if(it == devices_.end() || it->companion != session) return;
+        it->error = error; it->companion = nullptr; session->deleteLater();
+        transition(*it, State::Error); publish();
+    });
+    connect(session, &CompanionSession::stopped, this, [this,key,session] {
+        auto it = devices_.find(key);
+        if(it == devices_.end() || it->companion != session) return;
+        it->companion = nullptr; session->deleteLater();
+        if(it->state == State::Busy) transition(*it, State::Connected);
+        publish();
+    });
+    publish(); session->start(it->usb.port);
+}
+
+void Backend::stopCompanion(const QString& key) {
+    auto it = devices_.find(key);
+    if(it == devices_.end() || !it->companion) { publish(); return; }
+    it->companion->stop();
+}
 void Backend::command(const QJsonObject& request) {
     error_ = {};
     const auto op = request["op"].toString();
@@ -514,6 +569,18 @@ void Backend::command(const QJsonObject& request) {
     if(op == "manageStop") { stopManage(key.isEmpty() ? selected_ : key); return; }
     if(op == "devStart") { startDev(key.isEmpty() ? selected_ : key); return; }
     if(op == "devStop") { stopDev(key.isEmpty() ? selected_ : key); return; }
+    if(op == "companionStart") { startCompanion(key.isEmpty() ? selected_ : key); return; }
+    if(op == "companionStop") { stopCompanion(key.isEmpty() ? selected_ : key); return; }
+    if(op == "companionPing") {
+        const auto target = key.isEmpty() ? selected_ : key;
+        if(!devices_.contains(target) || !devices_[target].companion) {
+            error_ = {{"code", "invalid_request"}, {"reason", "Companion is not running."},
+                {"suggestion", "Start Companion, then retry the diagnostic ping."}};
+            publish(); return;
+        }
+        devices_[target].companion->ping();
+        return;
+    }
     if(op == "devProject" || op == "devCreate" || op == "devBuild" || op == "devLint"
         || op == "devUpdateSdk" || op == "devInstallUfbt" || op == "devDeploy" || op == "devInspect") {
         const auto target = key.isEmpty() ? selected_ : key;

@@ -8,7 +8,7 @@ Ui.BarWidget {
     readonly property var device: service ? service.selectedDevice : null
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened : false
     readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing : false
-    readonly property string deviceName: device && device.info.hardware_name ? device.info.hardware_name : "Flipper"
+    readonly property string deviceName: device && device.info && device.info.hardware_name ? device.info.hardware_name : "Flipper"
 
     function open() { if (panelLoader.item) panelLoader.item.open() }
     function close() { if (panelLoader.item) panelLoader.item.close() }

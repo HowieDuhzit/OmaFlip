@@ -1,5 +1,79 @@
 # Validation record
 
+## UI redesign validation
+
+The redesigned checkout was verified separately from the earlier installed-plugin
+and physical-device acceptance below. Commands actually run:
+
+- CMake configure/build with `BUILD_TESTING=ON`: passed.
+- `ctest --test-dir build --output-on-failure`: foundation suite passed.
+- `python tests/test_ipc.py`: 4 passed.
+- `python tests/test_ui.py -v`: 63 hosted-panel assertions and 52 Qt 6 QML test
+  cases passed, with zero failures or QML binding/layout warnings.
+- Qt 6 `qmlformat` parsing, `omarchy plugin validate .`, and `git diff --check`:
+  passed.
+
+The hosted smoke uses the actual installed Omarchy UI/Commons and a separate
+Wayland test process, with a visibly labeled `TEST_ONLY` service fixture. It
+verifies navigation, exclusive session stop/start, device changes, disconnect and
+DFU gating, and repeated open/close. Overview and Remote renders were visually
+inspected for clipping/overlap. View tests use real Qt keyboard events and cover
+input focus, responsive LCD sizing/orientations, destructive confirmations,
+stale-confirmation cancellation, script-save acknowledgment/failure, firmware
+download without a serial session, and Developer project readiness/reconnect.
+
+Screenshots and raw logs are generated under `$TMPDIR/omaflip-ui-artifacts`;
+see `tests/ui/README.md`. One nonfatal host portal app-ID warning was observed.
+External Qt 6 tests use synthetic theme tokens because Quickshell's embedded
+plugin cannot load in `qmltestrunner`; hosted tests use actual theme modules.
+
+The redesigned plugin was rebuilt and installed locally, then verified Connected.
+Disable/enable and rescan left old nested QML visible despite matching installed
+file hashes; the supported `omarchy-restart-shell` cleared that cache. The new
+sidebar was visually confirmed in the production shell. `screenshots/remote.png`
+is a tightly cropped capture of the actual Remote stream on the connected Flipper.
+
+The maintainer subsequently confirmed that hardware testing was already completed
+and explicitly asked to skip further device-write tests. This is maintainer-reported
+acceptance, not an independently rerun feature-by-feature hardware matrix. Firmware
+flashing, backup restoration, device-file deletion, FAP deployment, and desktop lock
+were not independently exercised during release preparation. Official running
+firmware and multi-device behavior remain outside the verified host/device scope.
+
+## Release tooling verification
+
+The CI workflow now installs protobuf and Qt 6 parser dependencies, pins checkout
+to its verified upstream SHA and the Arch container to its verified OCI digest,
+and builds/verifies/rebuilds source-bound release assets. Arch package inputs
+remain rolling. Local Docker execution was unavailable because daemon access was
+denied; local build/extraction tests are not a claim of successful remote CI.
+
+`python tests/test_release.py -v` passed all four integrity/source-boundary
+regressions. `python tests/test_install.py --host -v` passed all four installer
+checks: complete fresh-copy surface, refusal to overwrite existing modifications,
+missing-backend refusal, and the installed Omarchy removal script's backup and
+unrelated-state preservation. HOME and shell commands were isolated test fixtures;
+these are filesystem/tooling checks, not a second production install/removal.
+
+Final local `tests/run --ui` passed: native QtTest reported 70 passed, zero failed
+or skipped; IPC reported four passed; release-integrity tests reported four passed;
+portable installer tests reported three passed. The optional isolated host-removal
+check also passed, bringing that installer invocation to four passed. Hosted UI
+retained 63 assertions and 52 Qt 6 test cases, with no QML binding/layout errors.
+
+Companion PTY regressions reproduced the original transport-write and synchronous
+removal crashes before the fixes, then verified stop/unplug/restart/destruction,
+APP_CLOSED and terminal RPC errors, bounded asynchronous telemetry, responsive
+ping handling, and cancellation of controlled helper/action processes. No real
+host desktop actions or hardware writes were executed by those fixtures.
+
+An optional sanitizer build compiled but its shared protobuf serialization control
+also crashed independently of Companion; ASan/UBSan acceptance is unresolved,
+not claimed as passed. Preparation archives from dirty snapshots are explicitly
+non-publishable and must be regenerated from the final clean commit.
+
+## Earlier release validation
+
 Date: **2026-09-18 (US/Eastern)**. Host: Omarchy **4.0.4-1**, Qt **6.11.2**,
 libudev **261**, GCC **16.2.1**. Automated validation was followed by a
 physical Momentum Flipper pass. Device serials are intentionally omitted here.

@@ -8,6 +8,7 @@
 #include "manage.h"
 #include "dev.h"
 #include "firmware.h"
+#include "companion.h"
 #include <QJsonArray>
 #include <QMap>
 #include <memory>
@@ -24,6 +25,7 @@ struct Device {
     AppSession* apps = nullptr;
     ManageSession* manage = nullptr;
     DevSession* dev = nullptr;
+    CompanionSession* companion = nullptr;
     QStringList screenshots;
 };
 class Backend : public QObject {
@@ -50,6 +52,8 @@ private:
     void stopManage(const QString& key);
     void startDev(const QString& key);
     void stopDev(const QString& key);
+    void startCompanion(const QString& key);
+    void stopCompanion(const QString& key);
     bool refuseHeldPort(const Device& device, const QString& action);
     QString holderName(const Device& device) const;
     void transition(Device& device, State next);

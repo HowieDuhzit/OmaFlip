@@ -5,19 +5,24 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-24.04
-    container: archlinux:base-devel
+    # Official archlinux:base-devel OCI index, verified against registry response/body.
+    container: archlinux@sha256:51dd3d24f7fba779e7c471caeee7804c50e8c134ad948e19685a1c83a42facc3
+    timeout-minutes: 20
     steps:
-      - name: Install native build dependencies
-        run: pacman -Syu --noconfirm --needed cmake gcc qt6-base systemd pkgconf python git
-      - uses: actions/checkout@v4
+      - name: Install native build and QML parsing dependencies
+        # Arch packages are rolling inputs; this does not claim a locked toolchain.
+        run: pacman -Syu --noconfirm --needed cmake gcc qt6-base qt6-declarative systemd pkgconf protobuf python git
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1, verified upstream tag
         with:
           persist-credentials: false
-      - name: Build
+      - name: Required portable backend, IPC and static checks
+        run: tests/run
+      - name: Build source-bound release assets
+        run: scripts/package --output "$RUNNER_TEMP/omaflip-release"
+      - name: Verify checksums and extracted source rebuild
         run: |
-          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build --parallel 2
-      - name: Test native transport and IPC
-        run: |
-          ctest --test-dir build --output-on-failure
-          python3 tests/test_ipc.py
-# Shell/QML and physical-device acceptance require an Omarchy host; see docs/validation.md.
+          python3 packaging/release.py --verify "$RUNNER_TEMP/omaflip-release"
+          (cd "$RUNNER_TEMP/omaflip-release" && sha256sum --check SHA256SUMS)
+          python3 packaging/verify_archive.py "$RUNNER_TEMP/omaflip-release" --rebuild
+# Host UI is separate: tests/run --ui on supported Omarchy/Wayland.
+# Physical-device/lifecycle acceptance remains in docs/validation.md.

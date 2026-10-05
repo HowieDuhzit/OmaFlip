@@ -182,6 +182,21 @@ PB::Main appStartRequest(quint32 id, const QString& name, const QString& args) {
     return message;
 }
 
+PB::Main appDataExchangeRequest(quint32 id, const QByteArray& data) {
+    PB::Main message;
+    message.set_command_id(id);
+    message.mutable_app_data_exchange_request()->set_data(data.toStdString());
+    return message;
+}
+
+PB::Main commandResponse(quint32 id, PB::CommandStatus status) {
+    PB::Main message;
+    message.set_command_id(id);
+    message.set_command_status(status);
+    message.mutable_empty();
+    return message;
+}
+
 PB::Main appExitRequest(quint32 id) {
     PB::Main message;
     message.set_command_id(id);

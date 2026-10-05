@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 
@@ -5,10 +6,15 @@ Column {
     id: root
     property var service: null
     property color foreground: Color.foreground
-    spacing: Style.space(8)
+    property color accentColor: Color.accent
+    spacing: Style.space(12)
 
     readonly property bool vertical: service && (service.frameOrientation === 2 || service.frameOrientation === 3)
-    readonly property int pixel: 4
+    readonly property int screenColumns: vertical ? 64 : 128
+    readonly property int screenRows: vertical ? 128 : 64
+    // Whole LCD pixels whenever space permits; subpixel fit for very narrow panels.
+    readonly property real availableScale: Math.max(0, Math.min(4, width / screenColumns, Style.space(384) / screenRows))
+    readonly property real pixel: availableScale >= 1 ? Math.floor(availableScale) : availableScale
     readonly property string frameData: service ? (service.frameData || "") : ""
 
     function visualFromDelta(dx, dy) {
@@ -39,9 +45,14 @@ Column {
 
     Canvas {
         id: screen
-        width: (root.vertical ? 64 : 128) * root.pixel
-        height: (root.vertical ? 128 : 64) * root.pixel
+        objectName: "remoteScreen"
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: root.screenColumns * root.pixel
+        height: root.screenRows * root.pixel
         renderStrategy: Canvas.Immediate
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        Component.onCompleted: requestPaint()
         onPaint: {
             const ctx = getContext("2d")
             ctx.reset()
@@ -52,7 +63,7 @@ Column {
             const scale = root.pixel
             const w = 128, h = 64
             ctx.fillStyle = "#dcdcdc"
-            let orient = root.service ? root.service.frameOrientation : 0
+            const orient = root.service ? root.service.frameOrientation : 0
             for (let y = 0; y < h; y++) {
                 for (let x = 0; x < w; x++) {
                     if ((bytes[(y >> 3) * w + x] & (1 << (y & 7))) === 0) continue
@@ -67,21 +78,25 @@ Column {
         Rectangle {
             anchors.fill: parent
             color: "transparent"
-            border.color: Qt.alpha(root.foreground, 0.2)
+            border.color: Qt.alpha(root.foreground, 0.25)
             border.width: 1
-            radius: 4
         }
         Text {
             anchors.centerIn: parent
+            width: Math.max(0, parent.width - Style.space(16))
             visible: root.frameData.length === 0
             text: "Waiting for screen…"
-            color: Qt.alpha(root.foreground, 0.55)
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
+            color: "#dcdcdc"
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
         }
         MouseArea {
             id: pointer
+            objectName: "screenGestures"
             anchors.fill: parent
+            enabled: !!root.service
             hoverEnabled: true
             preventStealing: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
@@ -90,7 +105,7 @@ Column {
             property real originY: 0
             property bool dragged: false
             Accessible.role: Accessible.Button
-            Accessible.name: "Flipper screen"
+            Accessible.name: "Flipper screen: click OK, right-click Back, drag to navigate"
             onPressed: mouse => {
                 originX = mouse.x
                 originY = mouse.y
@@ -127,50 +142,58 @@ Column {
         function onFrameOrientationChanged() { screen.requestPaint() }
     }
 
-    Flow {
-        width: parent.width
-        spacing: Style.space(6)
+    // These are physical Flipper buttons, not orientation-relative gestures.
+    Item {
+        id: pad
+        objectName: "directionPad"
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(root.width, Style.space(252))
+        height: Style.space(114)
+        readonly property real gap: Math.min(Style.space(6), width / 12)
+        readonly property real cell: Math.max(0, (width - 2 * gap) / 3)
         Repeater {
             model: [
-                {label: "Up", button: "up"}, {label: "Down", button: "down"},
-                {label: "Left", button: "left"}, {label: "Right", button: "right"},
-                {label: "OK", button: "ok"}, {label: "Back", button: "back"}
+                {label: "↑", button: "up", col: 1, row: 0},
+                {label: "←", button: "left", col: 0, row: 1},
+                {label: "OK", button: "ok", col: 1, row: 1},
+                {label: "→", button: "right", col: 2, row: 1},
+                {label: "↓", button: "down", col: 1, row: 2}
             ]
-            Rectangle {
+            ToolButton {
                 required property var modelData
-                width: 72
-                height: Style.space(28)
-                radius: Style.cornerRadius
-                color: mouse.pressed ? Qt.alpha(root.foreground, 0.2) : (mouse.containsMouse ? Qt.alpha(root.foreground, 0.12) : Qt.alpha(root.foreground, 0.05))
-                border.width: 1
-                border.color: Qt.alpha(root.foreground, 0.25)
-                Text {
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: root.foreground
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.body
-                }
-                MouseArea {
-                    id: mouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    preventStealing: true
-                    acceptedButtons: Qt.LeftButton
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: if (root.service) root.service.input(modelData.button)
-                }
+                objectName: "remote-" + modelData.button
+                x: modelData.col * (pad.cell + pad.gap)
+                y: modelData.row * Style.space(40)
+                width: pad.cell
+                text: modelData.label
+                foreground: root.foreground
+                accentColor: root.accentColor
+                primary: modelData.button === "ok"
+                enabled: !!root.service
+                Accessible.name: modelData.button === "ok" ? "OK" : "Physical " + modelData.button
+                onTriggered: if (root.service) root.service.input(modelData.button)
             }
         }
+    }
+    ToolButton {
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(implicitWidth, root.width)
+        objectName: "remote-back"
+        text: "Back"
+        foreground: root.foreground
+        accentColor: root.accentColor
+        enabled: !!root.service
+        onTriggered: if (root.service) root.service.input("back")
     }
     Text {
         width: parent.width
         wrapMode: Text.Wrap
+        horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
         color: Qt.alpha(root.foreground, 0.65)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
-        text: "Click OK · right-click Back · drag D-pad · wheel scroll"
+        text: "Click: OK · right-click: Back\nDrag or scroll the screen to navigate · arrows: device buttons"
     }
     Text {
         width: parent.width
@@ -181,6 +204,7 @@ Column {
         }
         textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
+        horizontalAlignment: Text.AlignHCenter
         color: Qt.alpha(root.foreground, 0.65)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption

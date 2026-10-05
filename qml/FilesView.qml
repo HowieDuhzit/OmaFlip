@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 
@@ -5,7 +6,9 @@ Column {
     id: root
     property var service: null
     property color foreground: Color.foreground
-    spacing: Style.space(8)
+    readonly property color accentColor: Color.accent
+    readonly property bool inputActive: nameInput.activeFocus
+    spacing: Style.space(12)
 
     readonly property var files: {
         const device = service && service.selectedDevice
@@ -13,6 +16,11 @@ Column {
     }
     readonly property var entries: files.entries || []
     readonly property bool busy: !!files.busy
+    readonly property bool available: !!service && !!files.open
+    readonly property bool actionable: available && !busy && confirmKind === "" && nameMode === ""
+    readonly property int selectionCount: selectedEntries().length
+    readonly property bool hasDownload: selectedEntries().some(item => item.type !== "dir")
+    readonly property bool validName: !!nameInput.text.trim() && nameInput.text.trim() !== "." && nameInput.text.trim() !== ".." && nameInput.text.indexOf("/") === -1
     property int cursor: 0
     property var selected: ({})
     property string confirmKind: ""
@@ -52,8 +60,14 @@ Column {
         if (text.startsWith("file://")) text = decodeURIComponent(text.slice(7))
         return text
     }
+    function sizeLabel(bytes) {
+        const size = Number(bytes) || 0
+        if (size < 1024) return size + " B"
+        if (size < 1048576) return (size / 1024).toFixed(1) + " KB"
+        return (size / 1048576).toFixed(1) + " MB"
+    }
     function toggle(index, multi) {
-        if (!entries[index]) return
+        if (!actionable || !entries[index]) return
         cursor = index
         const name = entries[index].name
         if (!multi) {
@@ -69,7 +83,7 @@ Column {
     }
     function openItem(index) {
         const item = entries[index]
-        if (!item || !service) return
+        if (!actionable || !item) return
         cursor = index
         const path = root.join(files.path, item.name)
         if (item.type === "dir") {
@@ -78,48 +92,54 @@ Column {
         } else service.filesPreview(path)
     }
     function goParent() {
-        if (!service || !files.parent) return
+        if (!actionable || !files.parent) return
         selected = {}
         service.filesList(files.parent)
     }
     function requestDownload() {
+        if (!actionable) return
         const items = selectedEntries().filter(item => item.type !== "dir")
         if (!items.length) return
         confirmKind = "download"
         confirmHosts = items.map(item => root.join(files.path, item.name))
     }
     function requestDelete() {
+        if (!actionable) return
         const items = selectedEntries()
         if (!items.length) return
         confirmKind = "delete"
         confirmHosts = items.map(item => root.join(files.path, item.name))
     }
     function requestRename() {
+        if (!actionable) return
         const items = selectedEntries()
         if (items.length !== 1) return
         nameMode = "rename"
         nameSeed = items[0].name
         nameInput.text = items[0].name
         nameInput.forceActiveFocus()
+        nameInput.selectAll()
     }
     function requestMkdir() {
+        if (!actionable) return
         nameMode = "mkdir"
         nameSeed = ""
         nameInput.text = ""
         nameInput.forceActiveFocus()
     }
     function submitName() {
+        if (!available || busy || !validName || confirmKind !== "") return
         const name = nameInput.text.trim()
-        if (!service || !name) { nameMode = ""; return }
         if (nameMode === "mkdir") service.filesMkdir(root.join(files.path, name))
         else if (nameMode === "rename") {
             const items = selectedEntries()
             if (items.length === 1) service.filesRename(root.join(files.path, items[0].name), root.join(files.path, name))
         }
         nameMode = ""
+        nameInput.focus = false
     }
     function runConfirm() {
-        if (!service) return
+        if (!available || busy) return
         if (confirmKind === "delete") {
             for (const path of confirmHosts) {
                 const item = selectedEntries().find(entry => root.join(files.path, entry.name) === path)
@@ -139,6 +159,7 @@ Column {
         confirmHost = ""
     }
     function offerDrop(urls) {
+        if (!actionable) return
         const hosts = []
         for (let i = 0; i < urls.length; i++) {
             const path = localPath(urls[i])
@@ -150,13 +171,24 @@ Column {
         dropHint = ""
     }
 
+    onServiceChanged: if (!service) {
+        confirmKind = ""
+        confirmHosts = []
+        confirmPath = ""
+        confirmHost = ""
+        nameMode = ""
+        dropHint = ""
+        seenError = ""
+        selected = ({})
+    }
     onEntriesChanged: {
         cursor = Math.min(cursor, Math.max(0, entries.length - 1))
         const live = {}
         for (let i = 0; i < entries.length; i++) if (selected[entries[i].name]) live[entries[i].name] = true
         selected = live
     }
-
+    onCursorChanged: list.positionViewAtIndex(cursor, ListView.Contain)
+    onNameModeChanged: if (nameMode === "") nameInput.focus = false
     Connections {
         target: root.service
         function onDevicesChanged() {
@@ -169,285 +201,304 @@ Column {
         }
     }
 
-    Text {
+    Row {
         width: parent.width
-        text: files.path || "/ext"
-        textFormat: Text.PlainText
-        color: root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        font.bold: true
-        elide: Text.ElideMiddle
+        spacing: Style.space(8)
+        Text {
+            width: Math.max(0, parent.width - folderStatus.implicitWidth - parent.spacing)
+            text: root.files.path || "/ext"
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            font.bold: true
+            elide: Text.ElideMiddle
+        }
+        Text {
+            id: folderStatus
+            text: root.busy ? "Working…" : root.entries.length + " items"
+            color: root.busy ? root.accentColor : Qt.alpha(root.foreground, 0.65)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
+    }
+    Rectangle {
+        width: parent.width
+        height: errorLabel.implicitHeight + Style.space(20)
+        visible: !!root.files.error
+        radius: Style.cornerRadius
+        color: Qt.alpha(Color.urgent, 0.09)
+        border.color: Qt.alpha(Color.urgent, 0.35)
+        Text {
+            id: errorLabel
+            anchors.fill: parent
+            anchors.margins: Style.space(10)
+            text: "File operation failed\n" + (root.files.error || "")
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            color: root.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+        }
     }
     Text {
         width: parent.width
-        visible: !!files.error
-        text: files.error || ""
-        textFormat: Text.PlainText
-        wrapMode: Text.Wrap
-        color: root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-    }
-    Text {
-        width: parent.width
-        visible: !!(files.transfer && files.transfer.path)
+        visible: !!(root.files.transfer && root.files.transfer.path)
         text: {
-            const t = files.transfer || {}
+            const t = root.files.transfer || {}
             if (!t.path) return ""
-            const label = t.direction === "upload" ? "Uploading" : "Downloading"
-            const done = t.done ? " done" : ""
-            return label + " " + t.path + " · " + (t.bytes || 0) + " / " + (t.total || 0) + done
+            return (t.direction === "upload" ? "Uploading " : "Downloading ") + t.path + "\n" + root.sizeLabel(t.bytes) + " / " + root.sizeLabel(t.total) + (t.done ? " · Complete" : "")
         }
         textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
-        color: Qt.alpha(root.foreground, 0.7)
+        color: Qt.alpha(root.foreground, 0.75)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
     }
 
     Rectangle {
         width: parent.width
-        height: 220
+        height: Style.space(244)
         radius: Style.cornerRadius
-        color: Qt.alpha(root.foreground, drop.containsDrag ? 0.1 : 0.04)
+        color: Qt.alpha(root.foreground, 0.035)
         border.width: 1
-        border.color: Qt.alpha(root.foreground, drop.containsDrag || confirmKind ? 0.45 : 0.18)
-
+        border.color: drop.containsDrag ? root.accentColor : Qt.alpha(root.foreground, 0.16)
         DropArea {
             id: drop
             anchors.fill: parent
+            enabled: root.actionable
             onEntered: root.dropHint = "Drop to upload into " + (root.files.path || "/ext")
             onExited: root.dropHint = ""
-            onDropped: drop => root.offerDrop(drop.urls)
+            onDropped: event => root.offerDrop(event.urls)
         }
-
         ListView {
             id: list
             anchors.fill: parent
-            anchors.margins: 4
+            anchors.margins: Style.space(6)
             clip: true
-            visible: confirmKind === "" && nameMode === ""
+            spacing: Style.space(3)
+            visible: root.confirmKind === "" && root.nameMode === ""
+            enabled: root.actionable
             boundsBehavior: Flickable.StopAtBounds
             model: root.entries
             delegate: Rectangle {
+                id: fileRow
                 required property var modelData
                 required property int index
                 width: list.width
-                height: Style.space(26)
+                height: Style.space(40)
                 radius: Style.cornerRadius
-                color: Qt.alpha(root.foreground, root.cursor === index || root.selected[modelData.name] ? 0.12 : (hover.containsMouse ? 0.07 : 0))
-                Row {
-                    anchors.fill: parent
-                    anchors.leftMargin: Style.space(8)
-                    spacing: Style.space(8)
-                    Text {
-                        width: 18
-                        text: modelData.type === "dir" ? "▸" : "·"
-                        color: Qt.alpha(root.foreground, 0.55)
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.body
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        width: parent.width - 90
-                        text: modelData.name
-                        textFormat: Text.PlainText
-                        elide: Text.ElideMiddle
-                        color: root.foreground
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.body
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        width: 64
-                        text: modelData.type === "dir" ? "dir" : String(modelData.size || 0)
-                        color: Qt.alpha(root.foreground, 0.55)
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.caption
-                        horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
+                color: root.cursor === index || root.selected[modelData.name] ? Qt.alpha(root.accentColor, 0.14) : Qt.alpha(root.foreground, hover.containsMouse ? 0.07 : 0)
+                border.width: root.cursor === index ? 1 : 0
+                border.color: Qt.alpha(root.accentColor, 0.4)
+                Text {
+                    id: kindLabel
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(24)
+                    text: fileRow.modelData.type === "dir" ? "▸" : "·"
+                    color: fileRow.modelData.type === "dir" ? root.accentColor : Qt.alpha(root.foreground, 0.6)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.body
+                }
+                Text {
+                    anchors.left: kindLabel.right
+                    anchors.right: sizeText.left
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: fileRow.modelData.name
+                    textFormat: Text.PlainText
+                    elide: Text.ElideMiddle
+                    color: root.foreground
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.body
+                }
+                Text {
+                    id: sizeText
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(72)
+                    text: fileRow.modelData.type === "dir" ? "Folder" : root.sizeLabel(fileRow.modelData.size)
+                    color: Qt.alpha(root.foreground, 0.65)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                    horizontalAlignment: Text.AlignRight
                 }
                 MouseArea {
                     id: hover
                     anchors.fill: parent
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton
-                    onClicked: mouse => root.toggle(index, !!(mouse.modifiers & Qt.ControlModifier))
-                    onDoubleClicked: root.openItem(index)
+                    onClicked: mouse => root.toggle(fileRow.index, !!(mouse.modifiers & Qt.ControlModifier))
+                    onDoubleClicked: root.openItem(fileRow.index)
                 }
             }
         }
         Text {
             anchors.centerIn: parent
-            visible: confirmKind === "" && nameMode === "" && entries.length === 0 && !busy
-            text: dropHint || "This folder is empty. Drop a file to upload."
-            color: Qt.alpha(root.foreground, 0.55)
+            width: parent.width - Style.space(40)
+            visible: root.confirmKind === "" && root.nameMode === "" && root.entries.length === 0
+            text: !root.available ? "File session unavailable.\nOpen Files on a connected device." : root.busy ? "Reading the Flipper…" : root.files.error ? "Could not read this folder.\nUse Refresh to retry." : "This folder is empty.\nDrop a file here or create a folder."
+            color: Qt.alpha(root.foreground, 0.7)
             font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-        }
-        Text {
-            anchors.centerIn: parent
-            visible: busy && entries.length === 0 && confirmKind === ""
-            text: "Reading the Flipper…"
-            color: Qt.alpha(root.foreground, 0.55)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
+            font.pixelSize: Style.font.body
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
         }
         Column {
             anchors.centerIn: parent
-            width: parent.width - Style.space(24)
-            spacing: Style.space(10)
-            visible: confirmKind !== ""
+            width: parent.width - Style.space(32)
+            spacing: Style.space(12)
+            visible: root.confirmKind !== ""
             Text {
                 width: parent.width
-                wrapMode: Text.Wrap
-                textFormat: Text.PlainText
+                text: root.confirmKind === "delete" ? "Delete selected items?" : root.confirmKind === "overwrite" ? "Replace existing file?" : root.confirmKind === "upload" ? "Upload to device?" : "Download to computer?"
                 color: root.foreground
+                font.bold: true
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
+                wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                wrapMode: Text.WrapAnywhere
+                textFormat: Text.PlainText
+                color: Qt.alpha(root.foreground, 0.8)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
                 text: {
-                    if (confirmKind === "delete") return "Delete " + confirmHosts.length + " item(s)? Folders are removed with their contents."
-                    if (confirmKind === "download") return "Download " + confirmHosts.length + " file(s) into Downloads/OmaFlip?"
-                    if (confirmKind === "upload") return "Upload " + confirmHosts.length + " file(s) into " + (files.path || "/ext") + "?"
-                    if (confirmKind === "overwrite") return files.error || "Replace the existing file?"
-                    return ""
+                    if (root.confirmKind === "delete") return root.confirmHosts.length + " item(s) will be removed permanently. Folders include all their contents."
+                    if (root.confirmKind === "download") return root.confirmHosts.length + " file(s) → Downloads/OmaFlip"
+                    if (root.confirmKind === "upload") return root.confirmHosts.length + " file(s) → " + (root.files.path || "/ext")
+                    return root.files.error || "The existing file will be overwritten."
                 }
             }
-            Row {
+            Flow {
+                width: parent.width
                 spacing: Style.space(8)
-                Repeater {
-                    model: [{label: "Confirm", op: "ok"}, {label: "Cancel", op: "no"}]
-                    Rectangle {
-                        required property var modelData
-                        width: 88
-                        height: Style.space(28)
-                        radius: Style.cornerRadius
-                        color: mouse.pressed ? Qt.alpha(root.foreground, 0.2) : Qt.alpha(root.foreground, mouse.containsMouse ? 0.12 : 0.05)
-                        border.width: 1
-                        border.color: Qt.alpha(root.foreground, 0.25)
-                        Text { anchors.centerIn: parent; text: modelData.label; color: root.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body }
-                        MouseArea {
-                            id: mouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (modelData.op === "ok") root.runConfirm()
-                                else { root.confirmKind = ""; root.confirmHosts = [] }
-                            }
-                        }
-                    }
+                ToolButton {
+                    text: root.confirmKind === "delete" ? "Delete" : root.confirmKind === "overwrite" ? "Replace" : "Confirm"
+                    foreground: root.foreground
+                    destructive: root.confirmKind === "delete" || root.confirmKind === "overwrite"
+                    primary: !destructive
+                    enabled: root.available && !root.busy
+                    onTriggered: root.runConfirm()
+                }
+                ToolButton {
+                    text: "Cancel"
+                    foreground: root.foreground
+                    onTriggered: { root.confirmKind = ""; root.confirmHosts = [] }
                 }
             }
         }
         Column {
             anchors.centerIn: parent
-            width: parent.width - Style.space(24)
-            spacing: Style.space(8)
-            visible: nameMode !== ""
+            width: parent.width - Style.space(32)
+            spacing: Style.space(10)
+            visible: root.nameMode !== "" && root.confirmKind === ""
             Text {
-                text: nameMode === "mkdir" ? "New folder name" : "Rename to"
-                color: Qt.alpha(root.foreground, 0.7)
+                text: root.nameMode === "mkdir" ? "Create a folder" : "Rename item"
+                color: root.foreground
+                font.bold: true
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+            }
+            InputField {
+                id: nameInput
+                width: parent.width
+                foreground: root.foreground
+                placeholderText: root.nameMode === "mkdir" ? "Folder name" : "New name"
+                enabled: root.available && !root.busy
+                onAccepted: root.submitName()
+            }
+            Text {
+                width: parent.width
+                text: "Use a single name, without /, . or .."
+                color: Qt.alpha(root.foreground, 0.65)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
             }
-            TextInput {
-                id: nameInput
+            Flow {
                 width: parent.width
-                color: root.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-                onAccepted: root.submitName()
-            }
-            Row {
                 spacing: Style.space(8)
-                Repeater {
-                    model: [{label: "Save", op: "ok"}, {label: "Cancel", op: "no"}]
-                    Rectangle {
-                        required property var modelData
-                        width: 88
-                        height: Style.space(28)
-                        radius: Style.cornerRadius
-                        color: Qt.alpha(root.foreground, 0.08)
-                        border.width: 1
-                        border.color: Qt.alpha(root.foreground, 0.25)
-                        Text { anchors.centerIn: parent; text: modelData.label; color: root.foreground; font.family: Style.font.family; font.pixelSize: Style.font.body }
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: modelData.op === "ok" ? root.submitName() : (root.nameMode = "")
-                        }
-                    }
+                ToolButton {
+                    text: root.nameMode === "mkdir" ? "Create folder" : "Save name"
+                    foreground: root.foreground
+                    primary: true
+                    enabled: root.available && !root.busy && root.validName
+                    onTriggered: root.submitName()
+                }
+                ToolButton {
+                    text: "Cancel"
+                    foreground: root.foreground
+                    onTriggered: root.nameMode = ""
                 }
             }
         }
     }
-
+    Text {
+        width: parent.width
+        visible: root.confirmKind === "" && root.nameMode === ""
+        text: drop.containsDrag ? root.dropHint : root.selectionCount + " selected · Double-click to open · Ctrl-click to select more"
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: Qt.alpha(root.foreground, 0.65)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+    }
     Flow {
         width: parent.width
         spacing: Style.space(6)
+        visible: root.confirmKind === "" && root.nameMode === ""
         Repeater {
             model: [
-                {label: "Up", op: "up"},
-                {label: "Open", op: "open"},
-                {label: "Download", op: "download"},
-                {label: "Delete", op: "delete"},
-                {label: "Rename", op: "rename"},
-                {label: "New folder", op: "mkdir"}
+                {label: "Up", op: "up"}, {label: "Open", op: "open"},
+                {label: "Download", op: "download"}, {label: "Rename", op: "rename"},
+                {label: "New folder", op: "mkdir"}, {label: "Refresh", op: "refresh"},
+                {label: "Delete", op: "delete"}
             ]
-            Rectangle {
+            ToolButton {
                 required property var modelData
-                width: implicitWidth
-                implicitWidth: label.implicitWidth + Style.space(16)
-                height: Style.space(28)
-                radius: Style.cornerRadius
-                color: mouse.pressed ? Qt.alpha(root.foreground, 0.2) : (mouse.containsMouse ? Qt.alpha(root.foreground, 0.12) : Qt.alpha(root.foreground, 0.05))
-                border.width: 1
-                border.color: Qt.alpha(root.foreground, 0.25)
-                Text {
-                    id: label
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: root.foreground
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.body
-                }
-                MouseArea {
-                    id: mouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (modelData.op === "up") root.goParent()
-                        else if (modelData.op === "open") root.openItem(root.cursor)
-                        else if (modelData.op === "download") root.requestDownload()
-                        else if (modelData.op === "delete") root.requestDelete()
-                        else if (modelData.op === "rename") root.requestRename()
-                        else if (modelData.op === "mkdir") root.requestMkdir()
-                    }
+                text: modelData.label
+                foreground: root.foreground
+                primary: modelData.op === "open"
+                destructive: modelData.op === "delete"
+                enabled: root.actionable && (modelData.op === "up" ? !!root.files.parent : modelData.op === "open" ? !!root.entries[root.cursor] : modelData.op === "download" ? root.hasDownload : modelData.op === "rename" ? root.selectionCount === 1 : modelData.op === "delete" ? root.selectionCount > 0 : true)
+                onTriggered: {
+                    if (modelData.op === "up") root.goParent()
+                    else if (modelData.op === "open") root.openItem(root.cursor)
+                    else if (modelData.op === "download") root.requestDownload()
+                    else if (modelData.op === "delete") root.requestDelete()
+                    else if (modelData.op === "rename") root.requestRename()
+                    else if (modelData.op === "mkdir") root.requestMkdir()
+                    else if (modelData.op === "refresh") root.service.filesList(root.files.path || "/ext")
                 }
             }
         }
     }
-
-    Text {
+    Rectangle {
         width: parent.width
-        visible: !!(files.preview && files.preview.path)
-        text: {
-            const preview = files.preview || {}
-            if (!preview.path) return ""
-            const title = preview.path + (preview.kind === "text" ? "" : " · " + (preview.kind || "file"))
-            const body = preview.text || ""
-            return title + "\n" + body
+        height: previewLabel.implicitHeight + Style.space(24)
+        visible: !!(root.files.preview && root.files.preview.path)
+        radius: Style.cornerRadius
+        color: Qt.alpha(root.foreground, 0.04)
+        Text {
+            id: previewLabel
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
+            text: {
+                const preview = root.files.preview || {}
+                return "Preview · " + (preview.path || "") + (preview.kind === "text" ? "" : " · " + (preview.kind || "file")) + "\n" + (preview.text || "")
+            }
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: 12
+            elide: Text.ElideRight
+            color: Qt.alpha(root.foreground, 0.8)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
         }
-        textFormat: Text.PlainText
-        wrapMode: Text.WrapAnywhere
-        maximumLineCount: 12
-        elide: Text.ElideRight
-        color: Qt.alpha(root.foreground, 0.75)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
     }
 }

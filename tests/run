@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Required portable backend/IPC/static gates. Host UI is separately opt-in."""
+import argparse
+import ast
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import unittest
+
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def command(argv, **kwargs):
+    print("+ " + " ".join(map(str, argv)), flush=True)
+    subprocess.run(list(map(str, argv)), cwd=ROOT, check=True, **kwargs)
+
+
+def required(name):
+    executable = shutil.which(name)
+    if not executable:
+        raise RuntimeError(f"Required portable tool missing: {name}; no checks skipped")
+    return executable
+
+
+def static_checks():
+    qmlformat = (shutil.which(os.environ.get("OMAFLIP_QMLFORMAT", "/usr/lib/qt6/bin/qmlformat"))
+                 or shutil.which("qmlformat6") or shutil.which("qmlformat"))
+    if not qmlformat:
+        raise RuntimeError("Required QML parser missing: qmlformat (qt6-declarative)")
+    for path in sorted([*ROOT.glob("*.qml"), *(ROOT / "qml").glob("*.qml"),
+                        *(ROOT / "tests/ui").glob("*.qml")]):
+        command([qmlformat, path], stdout=subprocess.DEVNULL)
+    json.loads((ROOT / "manifest.json").read_text())
+    for directory in ("scripts", "tests", "packaging"):
+        for path in sorted((ROOT / directory).rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            text = path.read_text() if path.suffix in (".py", "") else ""
+            if path.suffix == ".py" or text.startswith("#!/usr/bin/env python3"):
+                ast.parse(text, filename=str(path))
+            elif text.startswith("#!/usr/bin/env bash"):
+                command([required("bash"), "-n", path])
+    command([sys.executable, "tests/test_release.py", "-v"])
+    command([sys.executable, "tests/test_install.py", "-v"])
+    print("PASS: JSON, Python, shell and QML parsing; release and installer regressions", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ui", action="store_true", help="Also run host-dependent real-QML UI tests (requires Omarchy/Wayland)")
+    parser.add_argument("--static", action="store_true", help="Explicit static-only subset, not the full portable gate")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "build")
+    parser.add_argument("--build-type", choices=("Debug", "RelWithDebInfo", "Release"), default="Debug")
+    args = parser.parse_args()
+    static_checks()
+    if not args.static:
+        for tool in ("cmake", "ctest", "pkg-config", "protoc"):
+            required(tool)
+        command(["pkg-config", "--exists", "Qt6Core >= 6.6", "Qt6Gui", "Qt6Network", "Qt6Test", "libudev", "protobuf"])
+        build = args.build_dir.resolve()
+        command(["cmake", "-S", ROOT, "-B", build, "-DBUILD_TESTING=ON", f"-DCMAKE_BUILD_TYPE={args.build_type}"])
+        command(["cmake", "--build", build, "--parallel", os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "2")])
+        command(["ctest", "--test-dir", build, "--output-on-failure", "--no-tests=error"])
+        spec = importlib.util.spec_from_file_location("test_ipc", ROOT / "tests/test_ipc.py")
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.BINARY = build / "omaflip"
+        result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(module))
+        if not result.wasSuccessful() or result.testsRun == 0 or result.skipped:
+            raise RuntimeError("Required IPC tests failed, missing or skipped")
+        print("PASS: required portable backend + IPC + static gates", flush=True)
+    else:
+        print("STATIC SUBSET ONLY: backend and IPC intentionally not requested", flush=True)
+    if args.ui:
+        command([sys.executable, "tests/test_ui.py", "-v"])
+    else:
+        print("Host-dependent UI not requested; run tests/run --ui on the supported Omarchy host", flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, subprocess.CalledProcessError, ValueError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        sys.exit(1)
