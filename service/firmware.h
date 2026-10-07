@@ -27,6 +27,7 @@ QString updateManifestPath(const QJsonObject& package);
 bool verifySha256(const QByteArray& data, const QString& expected);
 QString firmwareHostDir(QString& error);
 QString assetHostDir(QString& error);
+QString sanitizePackId(const QString& id);
 bool urlAllowed(const QString& url);
 bool urlAllowedFor(const QString& url, const QString& provider);
 bool channelAllowed(const QString& provider, const QString& channel);

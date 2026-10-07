@@ -1132,6 +1132,26 @@ private slots:
         QVERIFY(urlAllowedFor(catalog[0].toObject()["url"].toString(), "pack"));
         QVERIFY(!urlAllowedFor("https://example.com/x.tar.gz", "pack"));
     }
+    void sanitizePackIdRejectsTraversal() {
+        QCOMPARE(sanitizePackId("../../../Documents/private-backup"), QString("private-backup"));
+        QVERIFY(sanitizePackId("..").isEmpty());
+        QVERIFY(sanitizePackId(".").isEmpty());
+        QVERIFY(sanitizePackId("").isEmpty());
+        QCOMPARE(sanitizePackId("/etc/passwd"), QString("passwd"));
+        QCOMPARE(sanitizePackId("blank-screen"), QString("blank-screen"));
+        QCOMPARE(sanitizePackId("my_pack"), QString("my_pack"));
+    }
+    void assetIndexSkipsTraversalId() {
+        const QByteArray json = "{\"packs\":["
+            "{\"id\":\"../../../evil\",\"name\":\"Evil\",\"author\":\"x\",\"description\":\"no\","
+            "\"files\":[{\"url\":\"https://up.momentum-fw.dev/builds/asset-packs/evil/download/evil.tar.gz\",\"type\":\"pack_targz\",\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}],"
+            "\"stats\":{\"anims\":0,\"icons\":0,\"folders\":[\"Evil\"]}}]}";
+        QString error;
+        const auto catalog = parseAssetIndex(json, error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(catalog.size(), 1);
+        QCOMPARE(catalog[0].toObject()["id"].toString(), QString("evil"));
+    }
     void ufbtProjectHelpers() {
         QCOMPARE(sanitizeAppId("Hello_App"), QString("hello_app"));
         QVERIFY(sanitizeAppId("1bad").isEmpty());

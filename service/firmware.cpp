@@ -32,6 +32,15 @@ QString fileNameFromUrl(const QString& url) {
 }
 }
 
+QString sanitizePackId(const QString& id) {
+    QString out = QFileInfo(id).fileName();
+    out.replace('/', '_');
+    out.replace('\\', '_');
+    out.remove('\0');
+    if(out.isEmpty() || out == "." || out == "..") return {};
+    return out;
+}
+
 QString hardwareTargetName(const QString& raw) {
     const auto text = raw.trimmed().toLower();
     if(text == "7" || text == "f7") return "f7";
@@ -174,12 +183,14 @@ QJsonArray parseAssetIndex(const QByteArray& json, QString& error) {
             if(candidate.value("type").toString() == "pack_targz") { file = candidate; break; }
         }
         if(file.isEmpty() || !urlAllowedFor(file.value("url").toString(), "pack")) continue;
+        const auto packId = sanitizePackId(pack.value("id").toString());
+        if(packId.isEmpty()) continue;
         QJsonArray folders;
         for(const auto& folder : pack.value("stats").toObject().value("folders").toArray())
             folders.append(folder.toString());
         const auto stats = pack.value("stats").toObject();
         catalog.append(QJsonObject{
-            {"id", pack.value("id").toString()},
+            {"id", packId},
             {"name", pack.value("name").toString()},
             {"author", pack.value("author").toString()},
             {"description", pack.value("description").toString().left(240)},
@@ -388,7 +399,7 @@ void FirmwareClient::downloadPack(const QJsonObject& pack) {
                 {"suggestion", "Check that Downloads/OmaFlip is writable."}});
             return;
         }
-        auto name = pending_.value("id").toString();
+        auto name = sanitizePackId(pending_.value("id").toString());
         if(name.isEmpty()) name = "pack";
         const auto path = dir + "/" + name + ".tar.gz";
         QFile file(path);
